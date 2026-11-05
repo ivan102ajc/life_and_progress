@@ -1,4 +1,4 @@
-// Локальный сервер для разработки: `npm run dev` или `node server.js`.
+// Локальный сервер для разработки: `npm run dev` или `node dev-server.js`.
 // На Vercel этот файл не используется — там всё делает сама платформа.
 
 import http from 'node:http';

@@ -5,8 +5,8 @@
   "description": "Древо жизни — игра для саморазвития, где твои реальные дела растят дерево",
   "type": "module",
   "scripts": {
-    "dev": "node server.js",
-    "start": "node server.js"
+    "dev": "node dev-server.js",
+    "start": "node dev-server.js"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.0"
