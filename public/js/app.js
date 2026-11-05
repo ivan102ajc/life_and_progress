@@ -68,8 +68,43 @@ async function initTelegram() {
   if (!wa) return null;
   wa.ready();
   wa.expand();
+  try { wa.disableVerticalSwipes?.(); } catch { /* старая версия Telegram */ }
+  wa.BackButton?.onClick(onTelegramBack);
   document.documentElement.classList.add('in-telegram');
+  TG.wa = wa;
   return wa;
+}
+
+// --- Telegram: цвета шапки, кнопка «Назад», вибрация ---
+const TG = { wa: null };
+
+function haptic(kind) {
+  const h = TG.wa?.HapticFeedback;
+  if (!h) return;
+  try {
+    if (kind === 'success' || kind === 'warning' || kind === 'error') h.notificationOccurred(kind);
+    else h.impactOccurred(kind || 'light');
+  } catch { /* не поддерживается */ }
+}
+
+function syncTelegram() {
+  const wa = TG.wa;
+  if (!wa) return;
+  const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+  try { wa.setHeaderColor?.(bg); wa.setBackgroundColor?.(bg); wa.setBottomBarColor?.(bg); } catch { /* старая версия */ }
+  const needBack = !$('#sheet').hidden || (ui.save && ui.tab !== 'tree');
+  try { needBack ? wa.BackButton?.show() : wa.BackButton?.hide(); } catch { /* старая версия */ }
+}
+
+function onTelegramBack() {
+  if (!$('#sheet').hidden) {
+    closeSheet();
+    if (ui.selected) { ui.selected = null; render(); }
+  } else if (ui.tab !== 'tree') {
+    ui.tab = 'tree';
+    render();
+  }
+  syncTelegram();
 }
 
 async function loadGame() {
@@ -157,6 +192,9 @@ async function submitAuth(form) {
       ? await api.register(email, password, name)
       : await api.login(email, password);
     auth.token = res.token;
+    if (TG.wa?.initData) {
+      try { auth.token = (await api.telegram(TG.wa.initData)).token; } catch { /* привязка не обязательна */ }
+    }
     await loadGame();
   } catch (err) {
     renderAuth(err.message);
@@ -225,6 +263,7 @@ function addEvent(k, ref, t = eventTime()) {
   ui.save.events.push(e);
   const after = compute(ui.save);
   reportChange(before, after, e);
+  haptic(k === 'bad' ? 'warning' : after.player.level > before.player.level || after.effects[e.id]?.streak ? 'success' : 'light');
   commit();
   if (!reduceMotion) {
     const sphere = Object.keys(after.effects[e.id]?.gains || {})[0];
@@ -356,6 +395,7 @@ function render() {
   panel.innerHTML = {
     tree: panelTree, log: panelLog, skills: panelSkills, materials: panelMaterials, history: panelHistory,
   }[ui.tab](st);
+  syncTelegram();
 }
 
 function renderTopbar(st) {
@@ -634,6 +674,7 @@ function openSheet(html, onSubmit) {
     <div class="sheet-card" role="dialog" aria-modal="true">${html}</div>`;
   sheet.hidden = false;
   sheet._onSubmit = onSubmit;
+  syncTelegram();
   const first = sheet.querySelector('input, select, button.btn-primary');
   if (first) setTimeout(() => first.focus(), 30);
 }
@@ -642,6 +683,7 @@ function closeSheet() {
   sheet.hidden = true;
   sheet.innerHTML = '';
   sheet._onSubmit = null;
+  syncTelegram();
 }
 
 function confirmSheet(title, text, okLabel, onOk, danger = false) {
@@ -699,6 +741,7 @@ function openSettings() {
     <h3>Профиль</h3>
     <label class="field"><span>Имя</span><input id="set-name" maxlength="40" value="${esc(ui.save.name || ui.user.name)}"></label>
     <p class="small muted">${ui.user.email ? 'Почта: ' + esc(ui.user.email) : ''}${ui.user.telegram ? ' · Telegram привязан' : ''}</p>
+    ${TG.wa && !ui.user.email ? '<p class="small muted">Уже играл на сайте? Нажми «Выйти из аккаунта» и войди по почте — Telegram привяжется к тому аккаунту, и прогресс станет общим.</p>' : ''}
     <div class="sheet-actions stack">
       <button class="btn btn-ghost" data-action="save-name">Сохранить имя</button>
       <button class="btn btn-ghost" data-action="reset">Начать заново</button>

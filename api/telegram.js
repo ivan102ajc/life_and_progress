@@ -23,6 +23,16 @@ export default handle(async (req, res) => {
   const existing = await db.getUserByTg(tgId);
   const me = await currentUser(req);
 
+  // Игрок вошёл по почте внутри Telegram: привязываем Telegram к этому аккаунту.
+  // Если раньше для этого Telegram был создан отдельный аккаунт без почты,
+  // Telegram переходит к аккаунту с почтой (там основной прогресс с сайта).
+  if (me && existing && existing.id !== me.id && !existing.email && me.email) {
+    await db.setTelegram(existing.id, null);
+    await db.setTelegram(me.id, tgId);
+    const user = await db.getUserById(me.id);
+    return send(res, 200, { token: signToken(user.id), user: publicUser(user), linked: true });
+  }
+
   if (me && !existing) {
     await db.setTelegram(me.id, tgId);
     const user = await db.getUserById(me.id);
