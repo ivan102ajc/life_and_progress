@@ -378,11 +378,12 @@ p { margin: 0; }
 .hist.is-void { opacity: .55; }
 
 /* ---------- Всплывающее окно ---------- */
-.sheet { position: fixed; inset: 0; z-index: 50; display: grid; align-items: end; }
-.sheet-backdrop { position: absolute; inset: 0; background: rgba(10, 16, 12, .45); animation: fade .2s; }
+.sheet { position: fixed; inset: 0; z-index: 50; display: grid; align-items: end; overscroll-behavior: contain; }
+.sheet-backdrop { position: absolute; inset: 0; background: rgba(10, 16, 12, .45); animation: fade .2s; touch-action: none; }
 .sheet-card {
   position: relative; background: var(--surface); border-radius: var(--radius) var(--radius) 0 0;
   padding: 22px 18px calc(18px + var(--safe-b)); max-height: 88vh; overflow-y: auto;
+  overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
   display: grid; gap: 14px; animation: rise .25s ease-out;
 }
 .sheet-card p { color: var(--muted); }

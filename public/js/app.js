@@ -689,16 +689,43 @@ function openSheet(html, onSubmit) {
     <div class="sheet-card" role="dialog" aria-modal="true">${html}</div>`;
   sheet.hidden = false;
   sheet._onSubmit = onSubmit;
+  lockScroll();
   syncTelegram();
-  const first = sheet.querySelector('input, select, button.btn-primary');
-  if (first) setTimeout(() => first.focus(), 30);
+  // На телефоне не ставим фокус сами: иначе выскакивает клавиатура.
+  if (window.matchMedia('(pointer: fine)').matches) {
+    const first = sheet.querySelector('input, select, button.btn-primary');
+    if (first) setTimeout(() => first.focus(), 30);
+  }
 }
 function closeSheet() {
   const sheet = $('#sheet');
   sheet.hidden = true;
   sheet.innerHTML = '';
   sheet._onSubmit = null;
+  unlockScroll();
   syncTelegram();
+}
+
+// Пока открыто окно, страница под ним не должна прокручиваться.
+// На iPhone (и в Telegram) overflow: hidden не помогает, поэтому страницу
+// «замораживаем» на месте через position: fixed и потом возвращаем прокрутку.
+let lockedY = null;
+function lockScroll() {
+  if (lockedY !== null) return;
+  lockedY = window.scrollY;
+  const b = document.body.style;
+  b.position = 'fixed';
+  b.top = `-${lockedY}px`;
+  b.left = '0';
+  b.right = '0';
+  b.overflow = 'hidden';
+}
+function unlockScroll() {
+  if (lockedY === null) return;
+  const b = document.body.style;
+  b.position = ''; b.top = ''; b.left = ''; b.right = ''; b.overflow = '';
+  window.scrollTo(0, lockedY);
+  lockedY = null;
 }
 
 function confirmSheet(title, text, okLabel, onOk, danger = false) {
