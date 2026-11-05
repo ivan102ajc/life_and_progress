@@ -19,6 +19,9 @@ export function newSave(name = '') {
     events: [],              // { id, t, k: 'act'|'bad'|'skill'|'mat', ref }
     custom: { acts: [], bads: [] },
     tracked: [],             // id дел, за огоньком которых игрок следит
+    deleted: [],             // id отменённых событий (для синхронизации устройств)
+    resetAt: 0,              // когда игрок нажал «Начать заново»
+    changedAt: Date.now(),
   };
 }
 
@@ -31,6 +34,7 @@ export function normalizeSave(save, name) {
     ...save,
     events: Array.isArray(save.events) ? save.events : [],
     tracked: Array.isArray(save.tracked) ? save.tracked : [],
+    deleted: Array.isArray(save.deleted) ? save.deleted : [],
     custom: {
       acts: Array.isArray(save.custom?.acts) ? save.custom.acts : [],
       bads: Array.isArray(save.custom?.bads) ? save.custom.bads : [],

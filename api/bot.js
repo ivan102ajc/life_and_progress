@@ -8,6 +8,9 @@
 
 import crypto from 'node:crypto';
 import { send, readBody, handle } from '../lib/http.js';
+import { getDb } from '../lib/db.js';
+import { verifyLinkCode } from '../lib/auth.js';
+import { linkTelegram, maskEmail } from '../lib/link.js';
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 // Секрет, по которому мы узнаём, что запрос пришёл именно от Telegram.
@@ -76,7 +79,27 @@ export default handle(async (req, res) => {
   if (msg?.chat?.id && typeof msg.text === 'string') {
     const text = msg.text.trim();
     const button = { reply_markup: { inline_keyboard: [[{ text: '🌳 Открыть моё дерево', web_app: { url } }]] } };
-    if (text.startsWith('/start') || text.startsWith('/help')) {
+    const payload = text.startsWith('/start ') ? text.slice(7).trim() : '';
+    if (payload.startsWith('L') && msg.from?.id) {
+      // Привязка Telegram к аккаунту с сайта по ссылке из настроек игры.
+      const userId = verifyLinkCode(payload);
+      const db = await getDb();
+      const user = userId ? await db.getUserById(userId) : null;
+      let reply;
+      if (!user) {
+        reply = 'Ссылка для привязки устарела. Открой настройки игры на сайте и нажми «Привязать Telegram» ещё раз.';
+      } else {
+        const r = await linkTelegram(db, user, String(msg.from.id));
+        if (r.status === 'taken') {
+          reply = `Этот Telegram уже привязан к другому аккаунту (${maskEmail(r.other.email)}). Сначала отвяжи его там в настройках игры.`;
+        } else {
+          reply = `✅ Готово! Telegram привязан к аккаунту «${r.user.name}»` +
+            (r.status === 'merged' ? '. Прогресс из Telegram перенесён и сложен с прогрессом с сайта.' : '.') +
+            '\n\nТеперь на сайте и в Telegram одно и то же дерево.';
+        }
+      }
+      await tg('sendMessage', { chat_id: msg.chat.id, text: reply, ...button });
+    } else if (text.startsWith('/start') || text.startsWith('/help')) {
       await tg('sendMessage', { chat_id: msg.chat.id, text: WELCOME(msg.from?.first_name), ...button });
     } else {
       await tg('sendMessage', {

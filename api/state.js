@@ -3,6 +3,7 @@
 
 import { getDb } from '../lib/db.js';
 import { send, readBody, handle, currentUser, publicUser } from '../lib/http.js';
+import { mergeSaves } from '../public/js/sync.js';
 
 const MAX_SIZE = 1_500_000; // ~1,5 МБ — хватит на многие годы игры
 
@@ -29,8 +30,15 @@ export default handle(async (req, res) => {
     if (JSON.stringify(data).length > MAX_SIZE) {
       return send(res, 413, { error: 'Сохранение слишком большое' });
     }
-    const updatedAt = await db.saveState(user.id, data);
-    return send(res, 200, { ok: true, updatedAt });
+    // Игрок мог играть на другом устройстве: складываем обе версии,
+    // чтобы ничего не потерялось.
+    const stored = await db.getState(user.id);
+    const merged = mergeSaves(stored?.data || null, data);
+    if (JSON.stringify(merged).length > MAX_SIZE) {
+      return send(res, 413, { error: 'Сохранение слишком большое' });
+    }
+    const updatedAt = await db.saveState(user.id, merged);
+    return send(res, 200, { ok: true, updatedAt, data: merged });
   }
 
   return send(res, 405, { error: 'Метод не поддерживается' });

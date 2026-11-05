@@ -2,7 +2,7 @@
 
 import { getDb } from '../lib/db.js';
 import { hashPassword, verifyPassword, signToken } from '../lib/auth.js';
-import { send, readBody, handle, publicUser } from '../lib/http.js';
+import { send, readBody, handle, publicUser, currentUser } from '../lib/http.js';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -41,6 +41,29 @@ export default handle(async (req, res) => {
       return send(res, 401, { error: 'Неверная почта или пароль' });
     }
     return send(res, 200, { token: signToken(user.id), user: publicUser(user) });
+  }
+
+  // Добавить вход по почте к аккаунту, созданному в Telegram.
+  if (action === 'attach') {
+    const me = await currentUser(req);
+    if (!me) return send(res, 401, { error: 'Нужно войти в аккаунт' });
+    if (me.email) return send(res, 400, { error: 'У аккаунта уже есть почта' });
+    const other = await db.getUserByEmail(email);
+    if (other) {
+      return send(res, 409, {
+        error: 'Эта почта уже зарегистрирована на сайте. Можно объединить аккаунты — прогресс сложится.',
+        code: 'email_taken',
+      });
+    }
+    try {
+      await db.setLogin(me.id, email, hashPassword(password));
+    } catch (err) {
+      if (err.code === '23505' || /duplicate/i.test(err.message)) {
+        return send(res, 409, { error: 'Эта почта уже зарегистрирована', code: 'email_taken' });
+      }
+      throw err;
+    }
+    return send(res, 200, { user: publicUser(await db.getUserById(me.id)) });
   }
 
   return send(res, 400, { error: 'Неизвестное действие' });

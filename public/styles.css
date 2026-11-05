@@ -112,7 +112,7 @@ p { margin: 0; }
   background: var(--bg); font-size: 16px;
 }
 .field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
-.form-error { color: var(--bad); font-size: 14px; min-height: 1em; font-weight: 600; }
+.form-error, .sheet-card .form-error { color: var(--bad); font-size: 14px; min-height: 1em; font-weight: 600; }
 .check-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .check { display: flex; gap: 8px; align-items: center; font-size: 14px; padding: 6px 4px; }
 .check input { width: 18px; height: 18px; accent-color: var(--accent); }
@@ -312,6 +312,15 @@ p { margin: 0; }
   .tracker.is-lit .tr-flame svg { animation: flicker 2.4s ease-in-out infinite alternate; transform-origin: 50% 90%; }
 }
 @keyframes flicker { from { transform: scale(1) rotate(-1.5deg); } to { transform: scale(1.04) rotate(1.5deg); } }
+
+/* Связь аккаунтов */
+.link-list { display: grid; gap: 6px; }
+.link-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: var(--r-sm); background: var(--bg); }
+.link-ic { font-size: 20px; }
+.link-body { flex: 1; display: grid; min-width: 0; }
+.link-body strong { font-size: 14px; }
+.link-body small { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.is-pixel .link-row { border-radius: 0; border: 2px solid var(--ink); }
 
 /* Навыки */
 .skill-summary {

@@ -9,6 +9,7 @@ import {
 import { THEMES, THEME_BY_ID, applyTheme } from './themes.js';
 import { renderTree } from './tree.js';
 import { api, auth } from './api.js';
+import { mergeSaves, sameSave } from './sync.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -42,6 +43,7 @@ async function start() {
     try {
       const res = await api.telegram(tg.initData);
       auth.token = res.token;
+      if (res.notice) setTimeout(() => toast(res.notice, 'info'), 800);
     } catch (err) {
       if (err.status !== 501) console.warn('Telegram:', err.message);
     }
@@ -113,11 +115,11 @@ async function loadGame() {
     const res = await api.load();
     ui.user = res.user;
     const cached = readLocal(res.user.id);
-    let data = res.data;
-    // Если на этом устройстве есть более свежая несохранённая версия — берём её.
-    if (cached && (!data || (cached.savedAt || 0) > (res.updatedAt || 0))) data = cached.save;
-    ui.save = normalizeSave(data, res.user.name);
-    if (!res.data || data === cached?.save) queueSync();
+    // Складываем версию с сервера и несохранённую версию с этого устройства.
+    const server = res.data ? normalizeSave(res.data, res.user.name) : null;
+    const local = cached?.save ? normalizeSave(cached.save, res.user.name) : null;
+    ui.save = normalizeSave(mergeSaves(server, local), res.user.name);
+    if (!server || !sameSave(server, ui.save)) queueSync();
     showScreen('game');
     render();
   } catch (err) {
@@ -226,7 +228,18 @@ function queueSync() {
 async function syncNow() {
   clearTimeout(retryTimer);
   try {
-    await api.save(ui.save);
+    const res = await api.save(ui.save);
+    // Сервер вернул общую версию — с изменениями с других устройств.
+    if (res.data && ui.save) {
+      const merged = normalizeSave(mergeSaves(res.data, ui.save), ui.user.name);
+      if (!sameSave(merged, ui.save)) {
+        ui.save = merged;
+        writeLocal();
+        if ($('#sheet').hidden) render();
+      }
+      // За время запроса игрок мог отметить что-то ещё — отправим и это.
+      if (!sameSave(ui.save, normalizeSave(res.data, ui.user.name))) { queueSync(); return; }
+    }
     setSync('saved');
   } catch (err) {
     if (err.status === 401) { auth.token = null; showAuth(); return; }
@@ -244,6 +257,7 @@ function setSync(status, msg = '') {
 }
 
 function commit() {
+  ui.save.changedAt = Date.now();
   writeLocal();
   queueSync();
   render();
@@ -259,7 +273,7 @@ function eventTime() {
 
 function addEvent(k, ref, t = eventTime()) {
   const before = ui.state;
-  const e = { id: uid(), t, k, ref };
+  const e = { id: uid(), t, k, ref, c: Date.now() };
   ui.save.events.push(e);
   const after = compute(ui.save);
   reportChange(before, after, e);
@@ -274,6 +288,7 @@ function addEvent(k, ref, t = eventTime()) {
 function removeEvent(id) {
   const before = ui.state;
   ui.save.events = ui.save.events.filter(e => e.id !== id);
+  ui.save.deleted = [...ui.save.deleted, id];
   const after = compute(ui.save);
   commit();
   if (after.player.level < before.player.level) toast(`Общий уровень откатился до ${after.player.level}`, 'info');
@@ -740,14 +755,128 @@ function openSettings() {
     <div class="theme-grid">${themes}</div>
     <h3>Профиль</h3>
     <label class="field"><span>Имя</span><input id="set-name" maxlength="40" value="${esc(ui.save.name || ui.user.name)}"></label>
-    <p class="small muted">${ui.user.email ? 'Почта: ' + esc(ui.user.email) : ''}${ui.user.telegram ? ' · Telegram привязан' : ''}</p>
-    ${TG.wa && !ui.user.email ? '<p class="small muted">Уже играл на сайте? Нажми «Выйти из аккаунта» и войди по почте — Telegram привяжется к тому аккаунту, и прогресс станет общим.</p>' : ''}
+    ${accountBlock()}
     <div class="sheet-actions stack">
       <button class="btn btn-ghost" data-action="save-name">Сохранить имя</button>
       <button class="btn btn-ghost" data-action="reset">Начать заново</button>
       <button class="btn btn-ghost" data-action="logout">Выйти из аккаунта</button>
       <button class="btn btn-primary" data-action="close-sheet">Готово</button>
     </div>`);
+}
+
+// --- Связь аккаунтов сайта и Telegram ---
+function accountBlock() {
+  const u = ui.user;
+  const mail = u.email
+    ? `<span class="tr-done">✓</span>`
+    : `<button class="btn btn-small btn-primary" data-action="attach-email">Добавить</button>`;
+  const tgBtn = u.telegram
+    ? (u.email ? `<button class="btn btn-small btn-ghost" data-action="unlink-tg">Отвязать</button>` : `<span class="tr-done">✓</span>`)
+    : `<button class="btn btn-small btn-primary" data-action="link-tg">Привязать</button>`;
+  return `
+    <h3>Аккаунт</h3>
+    <div class="link-list">
+      <div class="link-row">
+        <span class="link-ic">✉️</span>
+        <span class="link-body"><strong>Вход по почте</strong><small>${u.email ? esc(u.email) : 'Не добавлен: без него не войти на сайте'}</small></span>
+        ${mail}
+      </div>
+      <div class="link-row">
+        <span class="link-ic">✈️</span>
+        <span class="link-body"><strong>Telegram</strong><small>${u.telegram ? 'Привязан: на сайте и в Telegram одно дерево' : 'Не привязан'}</small></span>
+        ${tgBtn}
+      </div>
+    </div>
+    ${TG.wa && !u.email ? `<button class="btn btn-ghost btn-wide" data-action="merge-login">Уже играю на сайте — объединить</button>` : ''}
+    <p class="small muted">Связанные вход по почте и Telegram — это один аккаунт: отметил дело на телефоне — увидишь его на компьютере. При объединении прогресс складывается, ничего не теряется.</p>`;
+}
+
+function credentialsForm(title, text, submitLabel, extra = '') {
+  return `
+    <h2>${title}</h2>
+    <p>${text}</p>
+    <form id="sheet-form" novalidate>
+      <label class="field"><span>Почта</span><input name="email" type="email" autocomplete="email" required placeholder="you@mail.ru"></label>
+      <label class="field"><span>Пароль</span><input name="password" type="password" autocomplete="current-password" required minlength="6" placeholder="Не короче 6 символов"></label>
+      <p class="form-error" role="alert"></p>
+      ${extra}
+      <div class="sheet-actions">
+        <button type="button" class="btn btn-ghost" data-action="close-sheet">Отмена</button>
+        <button class="btn btn-primary" type="submit">${submitLabel}</button>
+      </div>
+    </form>`;
+}
+
+// Войти в аккаунт с сайта прямо в Telegram — прогресс объединится.
+async function mergeLogin(email, password) {
+  const res = await api.login(email, password);
+  auth.token = res.token;
+  if (TG.wa?.initData) {
+    const linked = await api.telegram(TG.wa.initData);
+    auth.token = linked.token;
+    if (linked.notice) toast(linked.notice, 'info');
+  }
+  closeSheet();
+  await loadGame();
+  toast('Аккаунты объединены: теперь здесь и на сайте одно дерево', 'good');
+}
+
+function openMergeLogin() {
+  openSheet(credentialsForm('Объединить с аккаунтом сайта',
+    'Введи почту и пароль, с которыми играешь на сайте. Прогресс из Telegram сложится с прогрессом на сайте.',
+    'Объединить'), async (fd) => {
+    const err = $('#sheet .form-error');
+    try {
+      await mergeLogin(String(fd.get('email') || '').trim(), String(fd.get('password') || ''));
+    } catch (e) { err.textContent = e.message; }
+    return false;
+  });
+}
+
+function openAttachEmail() {
+  openSheet(credentialsForm('Вход по почте',
+    'Добавь почту и пароль, чтобы заходить в этот же аккаунт с сайта на компьютере.',
+    'Добавить'), async (fd) => {
+    const email = String(fd.get('email') || '').trim();
+    const password = String(fd.get('password') || '');
+    const err = $('#sheet .form-error');
+    try {
+      const res = await api.attachEmail(email, password);
+      ui.user = res.user;
+      closeSheet();
+      toast('Готово: теперь можно входить на сайте по почте', 'good');
+    } catch (e) {
+      err.textContent = e.message;
+      if (e.code === 'email_taken' && TG.wa) {
+        err.insertAdjacentHTML('afterend', `<button type="button" class="btn btn-primary btn-wide" data-action="merge-now">Объединить с этим аккаунтом</button>`);
+        $('#sheet')._merge = { email, password };
+      }
+    }
+    return false;
+  });
+}
+
+async function startLinkTelegram() {
+  let res;
+  try { res = await api.linkCode(); } catch (e) { toast(e.message, 'bad'); return; }
+  openSheet(`
+    <h2>Привязать Telegram</h2>
+    <p>Открой бота @${esc(res.bot)} и нажми «Start». Бот привяжет твой Telegram к этому аккаунту. Ссылка действует 30 минут.</p>
+    <p>Если ты уже играл в Telegram, прогресс оттуда сложится с этим.</p>
+    <div class="sheet-actions stack">
+      <a class="btn btn-primary" href="${esc(res.url)}" target="_blank" rel="noopener">Открыть бота</a>
+      <button class="btn btn-ghost" data-action="check-link">Я нажал Start</button>
+    </div>`);
+}
+
+async function refreshUser() {
+  const res = await api.load();
+  ui.user = res.user;
+  if (res.data) {
+    ui.save = normalizeSave(mergeSaves(res.data, ui.save), ui.user.name);
+    writeLocal();
+  }
+  return res.user;
 }
 
 function openAddTracker() {
@@ -845,7 +974,29 @@ function toast(text, kind = 'info') {
 // Обработка нажатий
 // ---------------------------------------------------------------------------
 
+// Когда игрок возвращается в приложение (например, отметил что-то на другом
+// устройстве), подтягиваем свежую версию с сервера.
+let lastPull = 0;
+async function pullFromServer() {
+  if (!ui.save || !auth.token || Date.now() - lastPull < 5000) return;
+  lastPull = Date.now();
+  try {
+    const res = await api.load();
+    if (res.user) ui.user = res.user;
+    if (!res.data || !ui.save) return;
+    const merged = normalizeSave(mergeSaves(res.data, ui.save), ui.user.name);
+    if (!sameSave(merged, ui.save)) {
+      ui.save = merged;
+      writeLocal();
+      if ($('#sheet').hidden) render();
+    }
+    if (!sameSave(merged, normalizeSave(res.data, ui.user.name))) queueSync();
+  } catch { /* нет связи — попробуем позже */ }
+}
+
 function bindEvents() {
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) pullFromServer(); });
+  window.addEventListener('focus', pullFromServer);
   document.addEventListener('click', onClick);
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !$('#sheet').hidden) closeSheet();
@@ -859,7 +1010,10 @@ function bindEvents() {
     if (e.target.id === 'auth-form') return submitAuth(e.target);
     if (e.target.id === 'sheet-form') {
       const fn = $('#sheet')._onSubmit;
-      if (fn && fn(new FormData(e.target)) !== false) closeSheet();
+      if (!fn) return;
+      const result = fn(new FormData(e.target));
+      // Асинхронные формы сами закрывают окно, когда всё получилось.
+      if (!(result instanceof Promise) && result !== false) closeSheet();
     }
   });
 }
@@ -896,6 +1050,27 @@ function onClick(e) {
     }
     case 'custom-act': return openCustomAct();
     case 'add-tracker': return openAddTracker();
+    case 'attach-email': return openAttachEmail();
+    case 'merge-login': return openMergeLogin();
+    case 'merge-now': {
+      const m = $('#sheet')._merge;
+      if (m) mergeLogin(m.email, m.password).catch(err => toast(err.message, 'bad'));
+      return;
+    }
+    case 'link-tg': return startLinkTelegram();
+    case 'check-link':
+      refreshUser().then((u) => {
+        closeSheet();
+        render();
+        toast(u.telegram ? 'Telegram привязан: теперь одно дерево на сайте и в Telegram' : 'Пока не привязан. Открой бота и нажми Start', u.telegram ? 'good' : 'info');
+        if (u.telegram) openSettings();
+      }).catch(err => toast(err.message, 'bad'));
+      return;
+    case 'unlink-tg':
+      return confirmSheet('Отвязать Telegram?', 'Прогресс останется в этом аккаунте. Открыв бота снова, ты начнёшь новое дерево, пока не привяжешь Telegram обратно.',
+        'Отвязать', async () => {
+          try { ui.user = (await api.unlinkTelegram()).user; toast('Telegram отвязан', 'info'); } catch (e) { toast(e.message, 'bad'); }
+        }, true);
     case 'track':
       if (!ui.save.tracked.includes(id)) ui.save.tracked.push(id);
       closeSheet(); commit(); toast('Огонёк добавлен', 'info');
@@ -941,7 +1116,7 @@ function onClick(e) {
     }
     case 'reset':
       return confirmSheet('Начать заново?', 'Весь прогресс, история и свои привычки будут удалены. Стиль оформления останется. Это нельзя отменить.',
-        'Удалить прогресс', () => { const theme = ui.save.theme; ui.save = newSave(ui.save.name); ui.save.theme = theme; ui.selected = null; commit(); }, true);
+        'Удалить прогресс', () => { const theme = ui.save.theme; ui.save = newSave(ui.save.name); ui.save.theme = theme; ui.save.resetAt = Date.now(); ui.selected = null; commit(); }, true);
     case 'logout':
       auth.token = null;
       ui.user = null; ui.save = null; ui.selected = null;
