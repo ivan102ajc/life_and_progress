@@ -4,6 +4,7 @@ import { SPHERES, SPHERE_BY_ID, SKILLS, SKILL_BY_ID, MATERIALS, RULES } from './
 import {
   newSave, normalizeSave, compute, uid, allActions, allBadHabits, findAction, findBad,
   findMaterial, countOnDay, skillStatus, dependentSkills, dayKey,
+  STREAK_MILESTONES, nextMilestone,
 } from './game.js';
 import { THEMES, THEME_BY_ID, applyTheme } from './themes.js';
 import { renderTree } from './tree.js';
@@ -254,6 +255,13 @@ function reportChange(before, after, e) {
   if (losses.length) {
     toast('Листья желтеют: ' + losses.map(([sid, v]) => `${SPHERE_BY_ID[sid].name} −${v}`).join(', '), 'bad');
   }
+  if (eff.streak) {
+    const a = findAction(ui.save, e.ref);
+    toast(`🔥 ${eff.streak.days} ${daysWord(eff.streak.days)} подряд: «${a?.name}». Бонус +${eff.streak.bonus}`, 'level');
+  } else if (e.k === 'act') {
+    const k = after.streaks[e.ref];
+    if (k && k.days >= 2 && after.effects[e.id]?.repeat === 0) toast(`🔥 Огонёк: ${k.days} ${daysWord(k.days)} подряд`, 'info');
+  }
   if (after.player.level > before.player.level) toast(`Общий уровень ${after.player.level}!`, 'level');
   if (after.stage.name !== before.stage.name && after.player.level > before.player.level) {
     toast(`Новая стадия: ${after.stage.name}`, 'level');
@@ -271,6 +279,65 @@ function pulse(sphereId) {
 // ---------------------------------------------------------------------------
 // Отрисовка
 // ---------------------------------------------------------------------------
+
+const FLAME = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2c1 4 5 5.5 5 11a5 5 0 0 1-10 0c0-2.5 1.2-4 2.5-5 .2 1.8 1 3 2.5 3.5C11 9 11 5.5 12 2z"/></svg>';
+
+function flameChip(st, actionId) {
+  const k = st.streaks[actionId];
+  if (!k || !k.days) return '';
+  const title = k.status === 'lit' ? 'дней подряд' : 'дней подряд — продли сегодня';
+  return `<span class="flame-chip is-${k.status}" title="${k.days} ${title}">${FLAME}${k.days}</span>`;
+}
+
+function daysWord(n) {
+  const a = n % 10; const b = n % 100;
+  if (a === 1 && b !== 11) return 'день';
+  if (a >= 2 && a <= 4 && (b < 12 || b > 14)) return 'дня';
+  return 'дней';
+}
+
+function streaksBlock(st) {
+  const ids = new Set(ui.save.tracked);
+  for (const [id, k] of Object.entries(st.streaks)) if (k.days >= 2) ids.add(id);
+  const items = [...ids].map(id => ({ a: findAction(ui.save, id), k: st.streaks[id] || { days: 0, best: 0, status: 'out' } }))
+    .filter(x => x.a && !x.a.archived)
+    .sort((x, y) => (y.k.days - x.k.days) || x.a.name.localeCompare(y.a.name));
+
+  const cards = items.map(({ a, k }) => {
+    const sp = SPHERE_BY_ID[a.sphere];
+    const pinned = ui.save.tracked.includes(a.id);
+    const next = nextMilestone(k.days);
+    let status;
+    if (k.status === 'lit') status = 'Горит: сегодня уже сделано';
+    else if (k.status === 'risk') status = 'Сделай сегодня, иначе огонёк погаснет';
+    else status = k.best ? `Погас. Рекорд: ${k.best} ${daysWord(k.best)}` : 'Ещё не зажжён — начни сегодня';
+    const goal = next ? `<small class="muted">До бонуса +${STREAK_MILESTONES[next]}: ещё ${next - k.days} ${daysWord(next - k.days)}</small>` : '';
+    const btn = k.status === 'lit'
+      ? `<span class="tr-done">✓ Сегодня</span>`
+      : `<button class="btn btn-small btn-primary" data-action="log-act" data-id="${a.id}" data-today="1">Сделал сегодня</button>`;
+    return `
+      <div class="tracker is-${k.status}" style="--c:${sp.color}">
+        <div class="tr-flame">${FLAME}<b>${k.days}</b></div>
+        <div class="tr-body">
+          <strong>${sp.icon} ${esc(a.name)}</strong>
+          <small>${status}</small>
+          ${goal}
+        </div>
+        <div class="tr-side">
+          ${btn}
+          ${pinned ? `<button class="tr-unpin" data-action="untrack" data-id="${a.id}" aria-label="Не следить за огоньком">Убрать</button>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+
+  return `
+    <div class="panel-head">
+      <h2>Огоньки</h2>
+      <p class="muted">Делай одно и то же дело несколько дней подряд — загорится огонёк. На 3, 7, 14, 30, 60 и 100 день — бонус опыта. Пропустил день — огонёк гаснет.</p>
+    </div>
+    ${cards ? `<div class="tracker-list">${cards}</div>` : ''}
+    <button class="btn btn-ghost btn-wide" data-action="add-tracker">Следить за огоньком</button>`;
+}
 
 function render() {
   const theme = THEME_BY_ID[ui.save.theme] || THEME_BY_ID.spring;
@@ -302,10 +369,10 @@ function renderTopbar(st) {
       </div>
     </div>
     <div class="tb-right">
-      <div class="streak${st.streak ? '' : ' is-zero'}" title="Дней подряд с полезными делами">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2c1 4 5 5.5 5 11a5 5 0 0 1-10 0c0-2.5 1.2-4 2.5-5 .2 1.8 1 3 2.5 3.5C11 9 11 5.5 12 2z"/></svg>
+      <button class="streak${st.streak ? '' : ' is-zero'}" data-action="tab" data-tab="log" title="Дней подряд с полезными делами. Нажми, чтобы открыть огоньки">
+        ${FLAME}
         <span>${st.streak}</span>
-      </div>
+      </button>
       <div id="sync" class="sync" data-status="${ui.sync}"><i></i><span></span></div>
       <button class="icon-btn" data-action="settings" aria-label="Настройки и стиль">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
@@ -388,6 +455,7 @@ function panelLog(st) {
       <button class="act${n ? ' is-done' : ''}" data-action="log-act" data-id="${a.id}" style="--c:${sp.color}">
         <span class="act-icon">${sp.icon}</span>
         <span class="act-name">${esc(a.name)}</span>
+        ${flameChip(st, a.id)}
         <span class="act-xp">+${Math.round(a.xp * f)}${n ? `<small>×${n}</small>` : ''}</span>
       </button>`;
   }).join('');
@@ -405,7 +473,8 @@ function panelLog(st) {
   }).join('');
 
   return `
-    <div class="panel-head">
+    ${streaksBlock(st)}
+    <div class="panel-head spaced">
       <h2>Что ты сделал?</h2>
       <div class="segmented small">
         <button aria-selected="${ui.logDay === 0}" data-action="log-day" data-day="0">Сегодня</button>
@@ -605,7 +674,7 @@ function openSphere(id) {
     <h3>Быстро отметить ${ui.logDay ? 'за вчера' : 'за сегодня'}</h3>
     <div class="act-list compact">
       ${acts.map(a => `<button class="act" data-action="log-act" data-id="${a.id}" data-keep="1" style="--c:${sp.color}">
-        <span class="act-name">${esc(a.name)}</span><span class="act-xp">+${Math.round(a.xp * RULES.repeatFactors[Math.min(countOnDay(ui.state, a.id, t), 2)])}</span></button>`).join('')}
+        <span class="act-name">${esc(a.name)}</span>${flameChip(ui.state, a.id)}<span class="act-xp">+${Math.round(a.xp * RULES.repeatFactors[Math.min(countOnDay(ui.state, a.id, t), 2)])}</span></button>`).join('')}
     </div>
     <div class="sheet-actions">
       <button class="btn btn-ghost" data-action="goto-skills" data-sphere="${id}">Навыки ветви</button>
@@ -636,6 +705,20 @@ function openSettings() {
       <button class="btn btn-ghost" data-action="logout">Выйти из аккаунта</button>
       <button class="btn btn-primary" data-action="close-sheet">Готово</button>
     </div>`);
+}
+
+function openAddTracker() {
+  const groups = SPHERES.map(sp => {
+    const acts = allActions(ui.save).filter(a => a.sphere === sp.id && !ui.save.tracked.includes(a.id));
+    if (!acts.length) return '';
+    return `<h3>${sp.icon} ${sp.name}</h3><div class="act-list compact">${acts.map(a =>
+      `<button class="act" data-action="track" data-id="${a.id}" style="--c:${sp.color}"><span class="act-name">${esc(a.name)}</span>${flameChip(ui.state, a.id)}</button>`).join('')}</div>`;
+  }).join('');
+  openSheet(`
+    <h2>За каким делом следить?</h2>
+    <p>Огонёк будет всегда на виду, даже когда погаснет. Своё дело можно сначала добавить во вкладке «Отметить».</p>
+    ${groups}
+    <div class="sheet-actions"><button class="btn btn-ghost" data-action="close-sheet">Отмена</button></div>`);
 }
 
 function openCustomAct() {
@@ -760,7 +843,7 @@ function onClick(e) {
     case 'mat-sphere': ui.matSphere = el.dataset.sphere; return render();
     case 'log-day': ui.logDay = Number(el.dataset.day); return render();
     case 'log-act':
-      addEvent('act', id);
+      addEvent('act', id, el.dataset.today ? Date.now() : eventTime());
       if (el.dataset.keep && !$('#sheet').hidden) openSphere(ui.selected);
       return;
     case 'log-bad': {
@@ -769,6 +852,15 @@ function onClick(e) {
         'Отметить честно', () => addEvent('bad', id));
     }
     case 'custom-act': return openCustomAct();
+    case 'add-tracker': return openAddTracker();
+    case 'track':
+      if (!ui.save.tracked.includes(id)) ui.save.tracked.push(id);
+      closeSheet(); commit(); toast('Огонёк добавлен', 'info');
+      return;
+    case 'untrack':
+      ui.save.tracked = ui.save.tracked.filter(x => x !== id);
+      commit();
+      return;
     case 'custom-bad': return openCustomBad();
     case 'unlock-skill': {
       const sk = SKILL_BY_ID[id];

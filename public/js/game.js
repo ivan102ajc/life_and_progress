@@ -18,6 +18,7 @@ export function newSave(name = '') {
     createdAt: Date.now(),
     events: [],              // { id, t, k: 'act'|'bad'|'skill'|'mat', ref }
     custom: { acts: [], bads: [] },
+    tracked: [],             // id дел, за огоньком которых игрок следит
   };
 }
 
@@ -29,6 +30,7 @@ export function normalizeSave(save, name) {
     ...base,
     ...save,
     events: Array.isArray(save.events) ? save.events : [],
+    tracked: Array.isArray(save.tracked) ? save.tracked : [],
     custom: {
       acts: Array.isArray(save.custom?.acts) ? save.custom.acts : [],
       bads: Array.isArray(save.custom?.bads) ? save.custom.bads : [],
@@ -80,6 +82,18 @@ export function stageFor(level) {
   return { ...stage, next };
 }
 
+// Номер дня по местному времени — чтобы проверять, идут ли дни подряд.
+export function dayNum(t) {
+  return Math.floor((t - new Date(t).getTimezoneOffset() * 60000) / DAY);
+}
+
+// Огоньки: на какой день подряд даётся бонус и сколько опыта.
+export const STREAK_MILESTONES = { 3: 10, 7: 25, 14: 50, 30: 100, 60: 150, 100: 250, 365: 500 };
+
+export function nextMilestone(n) {
+  return Number(Object.keys(STREAK_MILESTONES).find(m => Number(m) > n)) || null;
+}
+
 export function dayKey(t) {
   const d = new Date(t);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -101,6 +115,7 @@ export function compute(save, now = Date.now()) {
   const learned = new Set();
   const goodDays = new Set();
   const lastBad = {};       // id привычки -> время последнего срыва
+  const runs = {};          // id действия -> { last: номер дня, len: дней подряд, best }
 
   const events = [...save.events].sort((a, b) => a.t - b.t);
 
@@ -143,6 +158,21 @@ export function compute(save, now = Date.now()) {
       const s = sp[a.sphere];
       eff.gains[a.sphere] = gainXp(s, a.xp * f, e.t);
       eff.repeat = n;
+      // Огонёк: первое выполнение за день продлевает серию.
+      const d = dayNum(e.t);
+      const r = runs[a.id] || (runs[a.id] = { last: null, len: 0, best: 0 });
+      if (r.last !== d) {
+        r.len = r.last === d - 1 ? r.len + 1 : 1;
+        r.last = d;
+        r.best = Math.max(r.best, r.len);
+        const bonus = STREAK_MILESTONES[r.len];
+        if (bonus) {
+          const extra = Math.round(bonus * growthFactor(s));
+          s.xp += extra;
+          eff.gains[a.sphere] += extra;
+          eff.streak = { days: r.len, bonus: extra };
+        }
+      }
       s.actions++;
       goodDays.add(dayKey(e.t));
       eff.valid = true;
@@ -197,14 +227,23 @@ export function compute(save, now = Date.now()) {
   if (!goodDays.has(dayKey(cursor))) cursor -= DAY;
   while (goodDays.has(dayKey(cursor))) { streak++; cursor -= DAY; }
 
+  // Огоньки на текущий момент: горит (сделано сегодня), тлеет (сделано вчера —
+  // сегодня ещё можно продлить), погас (пропущен день).
+  const today = dayNum(now);
+  const streaks = {};
+  for (const [id, r] of Object.entries(runs)) {
+    const status = r.last === today ? 'lit' : r.last === today - 1 ? 'risk' : 'out';
+    streaks[id] = { days: status === 'out' ? 0 : r.len, best: r.best, status };
+  }
+
   const cleanDays = {};
   for (const [id, t] of Object.entries(lastBad)) cleanDays[id] = Math.floor((now - t) / DAY);
 
-  const today = dayKey(now);
+  const todayKey = dayKey(now);
   const todayCounts = {};
   for (const [key, n] of Object.entries(dayCounts)) {
     const [d, id] = key.split('|');
-    if (d === today) todayCounts[id] = n;
+    if (d === todayKey) todayCounts[id] = n;
   }
 
   const avgHealth = Math.round(
@@ -214,7 +253,7 @@ export function compute(save, now = Date.now()) {
 
   return {
     spheres: sp, totalXp, player, stage: stageFor(player.level), streak,
-    effects, cleanDays, learned, dayCounts, todayCounts, avgHealth,
+    effects, cleanDays, learned, dayCounts, todayCounts, avgHealth, streaks,
   };
 }
 
