@@ -543,3 +543,34 @@ p { margin: 0; }
 
 /* Внутри Telegram верхняя панель не нужна такой высокой */
 .in-telegram .topbar { padding-top: 8px; }
+
+/* ---------- Обучение ---------- */
+.tour { position: fixed; inset: 0; z-index: 90; }
+.tour.is-center { background: rgba(8, 14, 10, .62); }
+.tour-hole {
+  position: fixed; border-radius: calc(var(--radius) + 4px); pointer-events: none;
+  box-shadow: 0 0 0 9999px rgba(8, 14, 10, .62), 0 0 0 3px var(--accent);
+  transition: left .3s ease, top .3s ease, width .3s ease, height .3s ease, opacity .2s;
+}
+.tour-card {
+  position: fixed; background: var(--surface); color: var(--ink); border-radius: var(--radius);
+  padding: 16px 18px 14px; display: grid; gap: 10px; box-shadow: 0 16px 40px rgba(0, 0, 0, .28);
+  transition: top .3s ease, left .3s ease; max-height: calc(100vh - 24px); overflow-y: auto;
+}
+.tour-card h2 { font-size: 18px; }
+.tour-card p { color: var(--ink); font-size: 15px; line-height: 1.5; }
+.tour-top { display: flex; justify-content: space-between; align-items: center; }
+.tour-count { font-size: 12px; font-weight: 800; color: var(--muted); }
+.tour-skip { border: 0; background: transparent; color: var(--muted); font-weight: 700; font-size: 13px; text-decoration: underline; padding: 4px 0; }
+.tour-list { margin: 0; padding-left: 20px; display: grid; gap: 4px; font-weight: 700; font-size: 15px; }
+.tour-dots { display: flex; gap: 5px; flex-wrap: wrap; }
+.tour-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--line); }
+.tour-dots i.is-on { background: var(--accent); width: 16px; border-radius: 3px; }
+.tour-actions { display: flex; justify-content: space-between; gap: 8px; }
+.tour-actions .btn { min-width: 110px; }
+.tour.no-anim .tour-hole, .tour.no-anim .tour-card { transition: none; }
+.is-pixel .tour-card, .is-pixel .tour-hole { border-radius: 0; }
+.is-pixel .tour-card { border: 3px solid var(--ink); }
+.is-pixel .tour-card h2 { font-size: 12px; line-height: 1.6; }
+.tour-on .snack, .tour-on .toasts { display: none; }
+@media (prefers-reduced-motion: reduce) { .tour-hole, .tour-card { transition: none; } }

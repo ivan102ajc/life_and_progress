@@ -51,6 +51,8 @@ export function mergeSaves(a, b) {
       subs: byId(a.custom?.subs, b.custom?.subs),
     },
     tracked: newer.tracked || [],
+    // Пройденное обучение не должно «забываться» из-за старого устройства.
+    seenTips: [...new Set([...(a.seenTips || []), ...(b.seenTips || [])])],
   };
 }
 
@@ -62,5 +64,6 @@ export function sameSave(a, b) {
   return b.events.every(e => ids.has(e.id) && ids.get(e.id) === (e.ne || 0)) &&
     a.theme === b.theme && a.name === b.name &&
     JSON.stringify(a.custom) === JSON.stringify(b.custom) &&
-    JSON.stringify(a.tracked) === JSON.stringify(b.tracked);
+    JSON.stringify(a.tracked) === JSON.stringify(b.tracked) &&
+    JSON.stringify([...(a.seenTips || [])].sort()) === JSON.stringify([...(b.seenTips || [])].sort());
 }

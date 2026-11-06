@@ -11,6 +11,7 @@ import { THEMES, THEME_BY_ID, applyTheme } from './themes.js';
 import { renderTree, renderBranch, subColor, formatMinutes } from './tree.js';
 import { api, auth } from './api.js';
 import { mergeSaves, sameSave } from './sync.js';
+import { planTour, runTour, tourActive, tourBack } from './tour.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -102,11 +103,12 @@ function syncTelegram() {
   if (!wa) return;
   const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
   try { wa.setHeaderColor?.(bg); wa.setBackgroundColor?.(bg); wa.setBottomBarColor?.(bg); } catch { /* старая версия */ }
-  const needBack = !$('#sheet').hidden || (ui.save && (ui.tab !== 'tree' || ui.zoom));
+  const needBack = tourActive() || !$('#sheet').hidden || (ui.save && (ui.tab !== 'tree' || ui.zoom));
   try { needBack ? wa.BackButton?.show() : wa.BackButton?.hide(); } catch { /* старая версия */ }
 }
 
 function onTelegramBack() {
+  if (tourActive()) { tourBack(); syncTelegram(); return; }
   if (!$('#sheet').hidden) {
     closeSheet();
     if (ui.selected) { ui.selected = null; render(); }
@@ -132,6 +134,7 @@ async function loadGame() {
     if (!server || !sameSave(server, ui.save)) queueSync();
     showScreen('game');
     render();
+    maybeStartTour();
   } catch (err) {
     if (err.status === 401) {
       auth.token = null;
@@ -144,6 +147,7 @@ async function loadGame() {
 
 function showScreen(name, message) {
   $('#auth').hidden = name !== 'auth';
+  if (name !== 'auth') $('#auth').innerHTML = '';
   $('#game').hidden = name !== 'game';
   $('#loading').hidden = name !== 'loading' && name !== 'error';
   if (name === 'loading') $('#loading').innerHTML = `<div class="loader-seed"></div><p>Поливаем дерево…</p>`;
@@ -245,7 +249,7 @@ async function syncNow() {
       if (!sameSave(merged, ui.save)) {
         ui.save = merged;
         writeLocal();
-        if ($('#sheet').hidden) render();
+        if ($('#sheet').hidden && !tourActive()) render();
       }
       // За время запроса игрок мог отметить что-то ещё — отправим и это.
       if (!sameSave(ui.save, normalizeSave(res.data, ui.user.name))) { queueSync(); return; }
@@ -402,13 +406,14 @@ function streaksBlock(st) {
       </div>`;
   }).join('');
 
-  return `
+  return `<section id="streaks-block" class="streaks-block">
     <div class="panel-head">
       <h2>Огоньки</h2>
       <p class="muted">Делай одно и то же дело несколько дней подряд — загорится огонёк. На 3, 7, 14, 30, 60 и 100 день — бонус опыта. Пропустил день — огонёк гаснет.</p>
     </div>
     ${cards ? `<div class="tracker-list">${cards}</div>` : ''}
-    <button class="btn btn-ghost btn-wide" data-action="add-tracker">Следить за огоньком</button>`;
+    <button class="btn btn-ghost btn-wide" data-action="add-tracker">Следить за огоньком</button>
+  </section>`;
 }
 
 function render() {
@@ -922,6 +927,46 @@ function confirmSheet(title, text, okLabel, onOk, danger = false) {
 }
 
 // ---------------------------------------------------------------------------
+// Обучение
+// ---------------------------------------------------------------------------
+
+// Открыть нужный экран без анимаций — для шагов обучения.
+function navigate({ tab = 'tree', zoom = null, histMode } = {}) {
+  if (!$('#sheet').hidden) closeSheet();
+  hideSnack();
+  ui.selected = null;
+  ui.tab = tab;
+  ui.zoom = tab === 'tree' ? zoom : null;
+  if (histMode) ui.histMode = histMode;
+  render();
+  syncTelegram();
+}
+
+function startTour(plan) {
+  if (!plan || !ui.save) return;
+  closeSheet();
+  hideSnack();
+  runTour(plan, {
+    navigate,
+    reduceMotion,
+    onFinish: ({ features }) => {
+      // Обучение показываем один раз — даже если игрок его пропустил.
+      ui.save.seenTips = [...new Set([...ui.save.seenTips, ...features])];
+      commit();
+      syncTelegram();
+    },
+  });
+  syncTelegram();
+}
+
+// Новичкам и тем, кто ещё не проходил, — полное обучение;
+// остальным — короткий тур по новым функциям, если они появились.
+function maybeStartTour() {
+  const plan = planTour(ui.save.seenTips);
+  if (plan) setTimeout(() => { if (ui.save && !tourActive() && $('#sheet').hidden) startTour(plan); }, 600);
+}
+
+// ---------------------------------------------------------------------------
 // Приближение к ветви и подветви
 // ---------------------------------------------------------------------------
 
@@ -1215,6 +1260,7 @@ function openSettings() {
     ${accountBlock()}
     <div class="sheet-actions stack">
       <button class="btn btn-ghost" data-action="save-name">Сохранить имя</button>
+      <button class="btn btn-ghost" data-action="tour-again">Пройти обучение заново</button>
       <button class="btn btn-ghost" data-action="reset">Начать заново</button>
       <button class="btn btn-ghost" data-action="logout">Выйти из аккаунта</button>
       <button class="btn btn-primary" data-action="close-sheet">Готово</button>
@@ -1457,7 +1503,7 @@ async function pullFromServer() {
     if (!sameSave(merged, ui.save)) {
       ui.save = merged;
       writeLocal();
-      if ($('#sheet').hidden) render();
+      if ($('#sheet').hidden && !tourActive()) render();
     }
     if (!sameSave(merged, normalizeSave(res.data, ui.user.name))) queueSync();
   } catch { /* нет связи — попробуем позже */ }
@@ -1525,6 +1571,9 @@ function onClick(e) {
       return window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
     case 'open-sphere': return zoomTo(el.dataset.sphere);
     case 'zoom-out': return zoomOut();
+    case 'tour-again':
+      closeSheet();
+      return startTour(planTour(ui.save.seenTips, { full: true }));
     case 'hist-mode': ui.histMode = el.dataset.mode; return render();
     case 'diary-sphere': ui.diarySphere = el.dataset.sphere; return render();
     case 'diary-export': return exportDiary();
