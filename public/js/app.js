@@ -31,7 +31,12 @@ const ui = {
   authMode: 'register',
   zoom: null,           // id ветви, к которой приблизились
   subPeriod: 'week',    // период сравнения подветвей: week | month | all
+  histMode: 'all',      // История: all — все отметки, diary — только заметки
+  diaryQuery: '',
+  diarySphere: 'all',
 };
+
+const MOODS = ['😞', '😕', '😐', '🙂', '😄'];
 
 // ---------------------------------------------------------------------------
 // Запуск
@@ -282,6 +287,10 @@ function addEvent(k, ref, t = eventTime(), extra = {}) {
   ui.save.events.push(e);
   const after = compute(ui.save);
   reportChange(before, after, e);
+  if (after.effects[e.id]?.valid) {
+    const info = eventInfo(e);
+    showSnack(`${info.icon} ${info.title}`, 'Добавить заметку', () => openNote(e.id));
+  }
   haptic(k === 'bad' ? 'warning' : after.player.level > before.player.level || after.effects[e.id]?.streak ? 'success' : 'light');
   commit();
   if (!reduceMotion) {
@@ -291,6 +300,7 @@ function addEvent(k, ref, t = eventTime(), extra = {}) {
 }
 
 function removeEvent(id) {
+  hideSnack();
   const before = ui.state;
   ui.save.events = ui.save.events.filter(e => e.id !== id);
   ui.save.deleted = [...ui.save.deleted, id];
@@ -660,50 +670,196 @@ function panelMaterials(st) {
 }
 
 // --- Вкладка «История» ---
+// Название, значок и сфера отметки — для истории и дневника.
+function eventInfo(e) {
+  if (e.k === 'act') { const a = findAction(ui.save, e.ref); return { title: a?.name || 'Удалённое дело', icon: SPHERE_BY_ID[a?.sphere]?.icon || '•', sphere: a?.sphere }; }
+  if (e.k === 'time') { const sb = findSub(ui.save, e.ref); return { title: `${sb?.name || 'Удалённая подветвь'} · ${formatMinutes(Number(e.m) || 0)}`, icon: SPHERE_BY_ID[sb?.sphere]?.icon || '⏱', sphere: sb?.sphere }; }
+  if (e.k === 'bad') { const b = findBad(ui.save, e.ref); return { title: b?.name || 'Удалённая привычка', icon: '🥀', sphere: b ? Object.keys(b.damage || {})[0] : null, bad: true }; }
+  if (e.k === 'skill') { const k = SKILL_BY_ID[e.ref]; return { title: 'Навык: ' + (k?.name || '?'), icon: '🌱', sphere: k?.sphere }; }
+  if (e.k === 'mat') { const m = findMaterial(e.ref); return { title: 'Изучил: ' + (m?.title || '?'), icon: '📖', sphere: m?.sphere }; }
+  return { title: '?', icon: '•', sphere: null };
+}
+
+function fmtDay(t) {
+  const k = dayKey(t);
+  if (k === dayKey(Date.now())) return 'Сегодня';
+  if (k === dayKey(Date.now() - DAY)) return 'Вчера';
+  return new Date(t).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', weekday: 'short' });
+}
+const fmtTime = (t) => new Date(t).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+const hasNote = (e) => Boolean(e.note || e.mood);
+
 function panelHistory(st) {
+  const notes = ui.save.events.filter(hasNote).length;
+  const head = `
+    <div class="panel-head">
+      <h2>${ui.histMode === 'diary' ? 'Дневник' : 'История'}</h2>
+      <div class="segmented small">
+        <button aria-selected="${ui.histMode === 'all'}" data-action="hist-mode" data-mode="all">Отметки</button>
+        <button aria-selected="${ui.histMode === 'diary'}" data-action="hist-mode" data-mode="diary">Дневник${notes ? ` · ${notes}` : ''}</button>
+      </div>
+      <p class="muted">${ui.histMode === 'diary'
+        ? 'Твои заметки к делам: что получилось, что мешало, какие мысли. Добавить заметку можно сразу после отметки или кнопкой ✎ в отметках.'
+        : 'Понял, что был не так хорош, как отметил? Отмени — дерево пересчитается честно. Кнопка ✎ — заметка к делу.'}</p>
+    </div>`;
+  if (ui.histMode === 'diary') return head + panelDiary(st);
+
   const events = [...ui.save.events].sort((a, b) => b.t - a.t).slice(0, 200);
   if (!events.length) {
-    return `<div class="panel-head"><h2>История</h2></div>
-      <div class="callout"><p>Здесь будут все твои отметки. Любую можно отменить, если понял, что поторопился.</p>
+    return head + `<div class="callout"><p>Здесь будут все твои отметки. Любую можно отменить, если понял, что поторопился.</p>
       <button class="btn btn-primary" data-action="tab" data-tab="log">Отметить первое дело</button></div>`;
   }
-  const fmtDay = (t) => {
-    const k = dayKey(t);
-    if (k === dayKey(Date.now())) return 'Сегодня';
-    if (k === dayKey(Date.now() - DAY)) return 'Вчера';
-    return new Date(t).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', weekday: 'short' });
-  };
   let html = '';
   let lastDay = '';
   for (const e of events) {
     const d = fmtDay(e.t);
     if (d !== lastDay) { html += `<h3 class="hist-day">${d}</h3>`; lastDay = d; }
     const eff = st.effects[e.id] || { gains: {}, losses: {} };
-    let title = '';
-    let icon = '';
-    if (e.k === 'act') { const a = findAction(ui.save, e.ref); title = a?.name || 'Удалённое дело'; icon = SPHERE_BY_ID[a?.sphere]?.icon || '•'; }
-    if (e.k === 'time') { const sb = findSub(ui.save, e.ref); title = `${sb?.name || 'Удалённая подветвь'} · ${formatMinutes(Number(e.m) || 0)}`; icon = SPHERE_BY_ID[sb?.sphere]?.icon || '⏱'; }
-    if (e.k === 'bad') { const b = findBad(ui.save, e.ref); title = b?.name || 'Удалённая привычка'; icon = '🥀'; }
-    if (e.k === 'skill') { const k = SKILL_BY_ID[e.ref]; title = 'Навык: ' + (k?.name || '?'); icon = '🌱'; }
-    if (e.k === 'mat') { const m = findMaterial(e.ref); title = 'Изучил: ' + (m?.title || '?'); icon = '📖'; }
+    const { title, icon } = eventInfo(e);
     const fx = [
       ...Object.entries(eff.gains).map(([sid, v]) => `<span class="fx-good">+${v} ${SPHERE_BY_ID[sid].name}</span>`),
       ...Object.entries(eff.losses).map(([sid, v]) => `<span class="fx-bad">−${v} сила: ${SPHERE_BY_ID[sid].name}</span>`),
     ].join(' ') || '<span class="muted">не засчитано</span>';
-    const time = new Date(e.t).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    const note = hasNote(e)
+      ? `<button class="hist-note" data-action="note" data-id="${e.id}">${e.mood ? MOODS[e.mood - 1] + ' ' : ''}${esc((e.note || '').slice(0, 140))}${(e.note || '').length > 140 ? '…' : ''}</button>`
+      : '';
     html += `
       <div class="hist${eff.valid === false ? ' is-void' : ''}">
         <span class="hist-icon">${icon}</span>
-        <span class="hist-body"><strong>${esc(title)}</strong><small>${time} · ${fx}</small></span>
-        <button class="btn btn-small btn-ghost" data-action="undo" data-id="${e.id}">Отменить</button>
+        <span class="hist-body"><strong>${esc(title)}</strong><small>${fmtTime(e.t)} · ${fx}</small>${note}</span>
+        <span class="hist-actions">
+          <button class="icon-btn small${hasNote(e) ? ' is-on' : ''}" data-action="note" data-id="${e.id}" aria-label="${hasNote(e) ? 'Изменить заметку' : 'Добавить заметку'}" title="Заметка">✎</button>
+          <button class="btn btn-small btn-ghost" data-action="undo" data-id="${e.id}">Отменить</button>
+        </span>
       </div>`;
   }
+  return head + `<div class="hist-list">${html}</div>`;
+}
+
+function panelDiary(st) {
+  const all = ui.save.events.filter(hasNote);
+  if (!all.length) {
+    return `<div class="callout">
+      <h3>Дневник пока пуст</h3>
+      <p>Отметь дело — внизу появится кнопка «Добавить заметку». Напиши пару слов: что получилось, что было трудно, как настроение. Здесь соберётся твой дневник прогресса.</p>
+      <button class="btn btn-primary" data-action="tab" data-tab="log">Отметить дело</button>
+    </div>`;
+  }
+  const spheresUsed = new Set(all.map(e => eventInfo(e).sphere).filter(Boolean));
+  const chips = [{ id: 'all', name: 'Все', icon: '' }, ...SPHERES.filter(sp => spheresUsed.has(sp.id))].map(sp =>
+    `<button class="chip${ui.diarySphere === sp.id ? ' is-on' : ''}" data-action="diary-sphere" data-sphere="${sp.id}">${sp.icon ? sp.icon + ' ' : ''}${sp.name}</button>`).join('');
   return `
-    <div class="panel-head">
-      <h2>История</h2>
-      <p class="muted">Понял, что был не так хорош, как отметил? Отмени — дерево пересчитается честно.</p>
-    </div>
-    <div class="hist-list">${html}</div>`;
+    <label class="field diary-search"><span class="sr-only">Поиск по дневнику</span>
+      <input id="diary-search" type="search" placeholder="Поиск по заметкам" value="${esc(ui.diaryQuery)}" autocomplete="off">
+    </label>
+    <div class="chips">${chips}</div>
+    <div id="diary-list" class="diary-list">${diaryList()}</div>
+    ${TG.wa ? '' : '<button class="btn btn-ghost btn-wide" data-action="diary-export">Скачать дневник текстом</button>'}`;
+}
+
+function diaryEntries() {
+  const q = ui.diaryQuery.trim().toLowerCase();
+  return ui.save.events.filter(hasNote).map(e => ({ e, info: eventInfo(e) }))
+    .filter(({ e, info }) => ui.diarySphere === 'all' || info.sphere === ui.diarySphere)
+    .filter(({ e, info }) => !q || (e.note || '').toLowerCase().includes(q) || info.title.toLowerCase().includes(q))
+    .sort((a, b) => b.e.t - a.e.t);
+}
+
+function diaryList() {
+  const items = diaryEntries();
+  if (!items.length) return '<p class="muted">Ничего не нашлось.</p>';
+  let html = '';
+  let lastDay = '';
+  for (const { e, info } of items) {
+    const d = fmtDay(e.t);
+    if (d !== lastDay) { html += `<h3 class="hist-day">${d}</h3>`; lastDay = d; }
+    const sp = SPHERE_BY_ID[info.sphere];
+    html += `
+      <article class="diary-entry${info.bad ? ' is-bad' : ''}" style="--c:${info.bad ? 'var(--bad)' : sp?.color || 'var(--line)'}">
+        <header>
+          <span class="de-title">${info.icon} ${esc(info.title)}</span>
+          <span class="de-time">${fmtTime(e.t)}</span>
+        </header>
+        ${e.note ? `<p class="de-text">${esc(e.note)}</p>` : ''}
+        <footer>
+          ${e.mood ? `<span class="de-mood" title="Настроение">${MOODS[e.mood - 1]}</span>` : '<span></span>'}
+          <button class="link-btn" data-action="note" data-id="${e.id}">Изменить</button>
+        </footer>
+      </article>`;
+  }
+  return html;
+}
+
+function exportDiary() {
+  const items = diaryEntries().reverse();
+  const text = 'Дневник — Древо жизни\n\n' + items.map(({ e, info }) =>
+    `${new Date(e.t).toLocaleString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}\n` +
+    `${info.title}${e.mood ? '  ' + MOODS[e.mood - 1] : ''}\n${e.note || ''}`).join('\n\n———\n\n');
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `dnevnik-${dayKey(Date.now())}.txt`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function openNote(eventId) {
+  const e = ui.save.events.find(x => x.id === eventId);
+  if (!e) return;
+  const info = eventInfo(e);
+  const when = new Date(e.t).toLocaleString('ru-RU', { day: 'numeric', month: 'long', weekday: 'long', hour: '2-digit', minute: '2-digit' });
+  openSheet(`
+    <h2>${info.icon} ${esc(info.title)}</h2>
+    <p class="small">${when}</p>
+    <form id="sheet-form" novalidate>
+      <fieldset class="field mood-field"><legend>Настроение</legend>
+        <div class="mood-row">${MOODS.map((m, i) => `
+          <label class="mood"><input type="radio" name="mood" value="${i + 1}"${e.mood === i + 1 ? ' checked' : ''}><span>${m}</span></label>`).join('')}
+        </div>
+      </fieldset>
+      <label class="field"><span>Заметка</span>
+        <textarea name="note" rows="6" maxlength="2000" placeholder="${info.bad ? 'Что привело к срыву? Что поможет в следующий раз?' : 'Что получилось? Что было трудно? Что понял?'}">${esc(e.note || '')}</textarea>
+      </label>
+      <div class="sheet-actions">
+        ${hasNote(e) ? '<button type="button" class="btn btn-ghost" data-action="note-delete" data-id="' + e.id + '">Удалить</button>' : ''}
+        <button type="button" class="btn btn-ghost" data-action="close-sheet">Отмена</button>
+        <button class="btn btn-primary" type="submit">Сохранить</button>
+      </div>
+    </form>`, (fd) => {
+    const note = String(fd.get('note') || '').trim().slice(0, 2000);
+    const mood = Number(fd.get('mood')) || 0;
+    if (note) e.note = note; else delete e.note;
+    if (mood) e.mood = mood; else delete e.mood;
+    e.ne = Date.now();
+    commit();
+    toast(note || mood ? 'Заметка сохранена в дневнике' : 'Заметка удалена', 'info');
+  });
+  // Курсор сразу в поле заметки, если это компьютер.
+  if (window.matchMedia('(pointer: fine)').matches) setTimeout(() => $('#sheet textarea')?.focus(), 40);
+}
+
+// Плашка внизу экрана с кнопкой действия (например, «Добавить заметку»).
+let snackTimer = null;
+function showSnack(text, actionLabel, onAction) {
+  let el = $('#snack');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'snack';
+    el.className = 'snack';
+    el.setAttribute('role', 'status');
+    document.body.appendChild(el);
+  }
+  el.innerHTML = `<span class="snack-text">${esc(text)}</span><button class="snack-btn">${esc(actionLabel)}</button>`;
+  el.querySelector('.snack-btn').onclick = () => { hideSnack(); onAction(); };
+  el.classList.add('is-visible');
+  clearTimeout(snackTimer);
+  snackTimer = setTimeout(hideSnack, 6000);
+}
+function hideSnack() {
+  clearTimeout(snackTimer);
+  $('#snack')?.classList.remove('is-visible');
 }
 
 // ---------------------------------------------------------------------------
@@ -924,6 +1080,7 @@ function panelBranch(st) {
     </div>
     <div class="sheet-actions">
       <button class="btn btn-ghost" data-action="custom-act" data-sphere="${sp.id}">Своё дело</button>
+      <button class="btn btn-ghost" data-action="branch-notes" data-sphere="${sp.id}">Заметки ветви</button>
       <button class="btn btn-ghost" data-action="goto-skills" data-sphere="${sp.id}">Навыки ветви</button>
     </div>`;
 }
@@ -997,6 +1154,18 @@ function openLogTime(subId, fresh = false) {
   });
 }
 
+function subNotes(subId) {
+  const list = ui.save.events
+    .filter(e => hasNote(e) && ((e.k === 'time' && e.ref === subId) || (e.k === 'act' && findAction(ui.save, e.ref)?.sub === subId)))
+    .sort((a, b) => b.t - a.t).slice(0, 3);
+  if (!list.length) return '';
+  return `<div class="sub-notes"><h3>Последние заметки</h3>${list.map(e => `
+    <button class="sub-note" data-action="note" data-id="${e.id}">
+      <small>${fmtDay(e.t)}${e.mood ? ' · ' + MOODS[e.mood - 1] : ''}</small>
+      <span>${esc((e.note || '').slice(0, 160))}${(e.note || '').length > 160 ? '…' : ''}</span>
+    </button>`).join('')}</div>`;
+}
+
 function openSubMenu(subId) {
   const sb = findSub(ui.save, subId);
   if (!sb) return;
@@ -1005,6 +1174,7 @@ function openSubMenu(subId) {
   openSheet(`
     <h2>${sp.icon} ${esc(sb.name)}</h2>
     <p>${stat.minutes ? `Всего ${formatMinutes(stat.minutes)}, ${stat.xp} опыта. ` : stat.xp ? `${stat.xp} опыта. ` : 'Пока ни одной отметки. '}За неделю — ${formatMinutes(stat.minutes7)}, за месяц — ${formatMinutes(stat.minutes30)}.</p>
+    ${subNotes(sb.id)}
     <form id="sheet-form" novalidate>
       <label class="field"><span>Название</span><input name="name" maxlength="30" value="${esc(sb.name)}"></label>
       <p class="form-error" role="alert"></p>
@@ -1294,6 +1464,13 @@ async function pullFromServer() {
 }
 
 function bindEvents() {
+  document.addEventListener('input', (e) => {
+    if (e.target.id === 'diary-search') {
+      ui.diaryQuery = e.target.value;
+      const list = $('#diary-list');
+      if (list) list.innerHTML = diaryList();
+    }
+  });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) pullFromServer(); });
   window.addEventListener('focus', pullFromServer);
   document.addEventListener('click', onClick);
@@ -1348,6 +1525,19 @@ function onClick(e) {
       return window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
     case 'open-sphere': return zoomTo(el.dataset.sphere);
     case 'zoom-out': return zoomOut();
+    case 'hist-mode': ui.histMode = el.dataset.mode; return render();
+    case 'diary-sphere': ui.diarySphere = el.dataset.sphere; return render();
+    case 'diary-export': return exportDiary();
+    case 'note': return openNote(id);
+    case 'note-delete': {
+      const e2 = ui.save.events.find(x => x.id === id);
+      if (e2) { delete e2.note; delete e2.mood; e2.ne = Date.now(); commit(); toast('Заметка удалена', 'info'); }
+      return closeSheet();
+    }
+    case 'branch-notes':
+      ui.tab = 'history'; ui.histMode = 'diary'; ui.diarySphere = el.dataset.sphere; ui.zoom = null;
+      render();
+      return window.scrollTo({ top: 0, behavior: 'auto' });
     case 'sub-period': ui.subPeriod = el.dataset.period; return render();
     case 'add-sub': return openAddSub(ui.zoom);
     case 'fill-sub': {

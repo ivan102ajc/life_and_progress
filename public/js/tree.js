@@ -146,6 +146,8 @@ export function renderTree(state, theme, { selected = null, reduceMotion = false
   const back = [];
   const fallen = [];
   const branches = [];
+  const hits = [];   // невидимые зоны нажатия — на самом нижнем слое веток
+  const tags = [];   // значки сфер — на самом верхнем слое, чтобы их ничто не перекрывало
   const front = [];
 
   // --- небо ---
@@ -230,8 +232,7 @@ export function renderTree(state, theme, { selected = null, reduceMotion = false
       const dx = Math.sin(a) * 9; const dy = -Math.cos(a) * 9;
       g1 += leafShape(pixel ? 'square' : 'leaf', 9, mix(leafPalette[0], T.sky[1], .35), bx + dx, by + dy, ANGLES[i], pixel);
       const lx = bx + Math.sin(a) * 30; const ly = by - Math.cos(a) * 30;
-      g1 += label(sphere, lx, ly, isSel, true, pixel);
-      g1 += `<circle cx="${r1(lx)}" cy="${r1(ly)}" r="22" fill="transparent"/>`;
+      tags.push(`<g class="branch tag-wrap" data-sphere="${sphere.id}">${label(sphere, lx, ly, isSel, true, pixel)}<circle cx="${r1(lx)}" cy="${r1(ly)}" r="22" fill="transparent"/></g>`);
       branches.push(`<g class="branch is-bud${isSel ? ' is-selected' : ''}" data-sphere="${sphere.id}" tabindex="0" role="button" aria-label="${sphere.name}: ещё не проросла">${g1}</g>`);
       return;
     }
@@ -325,11 +326,11 @@ export function renderTree(state, theme, { selected = null, reduceMotion = false
     }
 
     const lx = tip[0] + dir[0] * 20; const ly = tip[1] + dir[1] * 20;
-    g1 += label(sphere, lx, ly, isSel, false, pixel, s.level);
+    tags.push(`<g class="branch tag-wrap" data-sphere="${sphere.id}">${label(sphere, lx, ly, isSel, false, pixel, s.level)}<circle cx="${r1(lx)}" cy="${r1(ly)}" r="20" fill="transparent"/></g>`);
 
     // Невидимая широкая область, чтобы ветку было легко нажать пальцем.
     const hit = curve.map(p => p.map(r1).join(' '));
-    g1 += `<path d="M${hit[0]} C${hit[1]} ${hit[2]} ${hit[3]}" stroke="transparent" stroke-width="34" fill="none" stroke-linecap="round"/>`;
+    hits.push(`<g class="branch" data-sphere="${sphere.id}"><path d="M${hit[0]} C${hit[1]} ${hit[2]} ${hit[3]}" stroke="transparent" stroke-width="30" fill="none" stroke-linecap="round"/></g>`);
 
     branches.push(`<g class="branch${isSel ? ' is-selected' : ''}" data-sphere="${sphere.id}" tabindex="0" role="button" aria-label="${sphere.name}, уровень ${s.level}, жизненная сила ${s.health}%"><g class="sway"${sway}>${g1}</g></g>`);
   });
@@ -339,7 +340,9 @@ export function renderTree(state, theme, { selected = null, reduceMotion = false
     ${sky.join('')}${back.join('')}
     <g class="fallen">${fallen.join('')}</g>
     ${front.join('')}
+    <g class="hits">${hits.join('')}</g>
     ${branches.join('')}
+    <g class="tags">${tags.join('')}</g>
   </svg>`;
 }
 

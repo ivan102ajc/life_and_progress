@@ -25,6 +25,9 @@ export function mergeSaves(a, b) {
   for (const e of [...(a.events || []), ...(b.events || [])]) {
     if (!e || !e.id || gone.has(e.id)) continue;
     if (resetAt && created(e) < resetAt) continue;
+    // Заметку могли изменить на другом устройстве: берём более свежую правку.
+    const prev = events.get(e.id);
+    if (prev && (prev.ne || 0) > (e.ne || 0)) continue;
     events.set(e.id, e);
   }
 
@@ -55,8 +58,8 @@ export function mergeSaves(a, b) {
 export function sameSave(a, b) {
   if (!a || !b) return false;
   if ((a.events?.length || 0) !== (b.events?.length || 0)) return false;
-  const ids = new Set(a.events.map(e => e.id));
-  return b.events.every(e => ids.has(e.id)) &&
+  const ids = new Map(a.events.map(e => [e.id, e.ne || 0]));
+  return b.events.every(e => ids.has(e.id) && ids.get(e.id) === (e.ne || 0)) &&
     a.theme === b.theme && a.name === b.name &&
     JSON.stringify(a.custom) === JSON.stringify(b.custom) &&
     JSON.stringify(a.tracked) === JSON.stringify(b.tracked);
