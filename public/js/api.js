@@ -1,5 +1,7 @@
 // Обращения к серверу.
 
+import { T, getLang } from './i18n.js';
+
 const TOKEN_KEY = 'tol_token';
 
 export const auth = {
@@ -10,20 +12,20 @@ export const auth = {
 };
 
 export async function request(path, { method = 'GET', body } = {}) {
-  const headers = { 'Content-Type': 'application/json' };
+  const headers = { 'Content-Type': 'application/json', 'X-Lang': getLang() };
   if (auth.token) headers.Authorization = `Bearer ${auth.token}`;
   let res;
   try {
     res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   } catch {
-    const e = new Error('Нет связи с сервером. Проверьте интернет.');
+    const e = new Error(T('Нет связи с сервером. Проверьте интернет.', 'Can’t reach the server. Check your internet connection.'));
     e.offline = true;
     throw e;
   }
   let data = {};
   try { data = await res.json(); } catch { /* пустой ответ */ }
   if (!res.ok) {
-    const e = new Error(data.error || `Ошибка сервера (${res.status})`);
+    const e = new Error(data.error || T(`Ошибка сервера (${res.status})`, `Server error (${res.status})`));
     e.status = res.status;
     e.code = data.code;
     throw e;

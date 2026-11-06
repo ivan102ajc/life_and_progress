@@ -8,7 +8,8 @@ import {
   STREAK_MILESTONES, nextMilestone,
 } from './game.js';
 import { THEMES, THEME_BY_ID, applyTheme } from './themes.js';
-import { renderTree, renderBranch, subColor, formatMinutes } from './tree.js';
+import { renderTree, renderBranch, subColor } from './tree.js';
+import { T, name as nm, plural, locale, setLang, getLang, detectLang, formatMinutes, LANGS } from './i18n.js';
 import { api, auth } from './api.js';
 import { mergeSaves, sameSave } from './sync.js';
 import { planTour, runTour, tourActive, tourBack } from './tour.js';
@@ -48,6 +49,8 @@ async function start() {
   bindEvents();
 
   const tg = await initTelegram();
+  setLang(detectLang(tg?.initDataUnsafe?.user?.language_code));
+  applyStaticTexts();
   if (tg?.initData) {
     try {
       const res = await api.telegram(tg.initData);
@@ -131,6 +134,9 @@ async function loadGame() {
     const server = res.data ? normalizeSave(res.data, res.user.name) : null;
     const local = cached?.save ? normalizeSave(cached.save, res.user.name) : null;
     ui.save = normalizeSave(mergeSaves(server, local), res.user.name);
+    // Язык хранится в аккаунте: выбранный на одном устройстве — и на другом.
+    if (ui.save.lang && ui.save.lang !== getLang()) { setLang(ui.save.lang); applyStaticTexts(); }
+    if (!ui.save.lang) ui.save.lang = getLang();
     if (!server || !sameSave(server, ui.save)) queueSync();
     showScreen('game');
     render();
@@ -150,10 +156,34 @@ function showScreen(name, message) {
   if (name !== 'auth') $('#auth').innerHTML = '';
   $('#game').hidden = name !== 'game';
   $('#loading').hidden = name !== 'loading' && name !== 'error';
-  if (name === 'loading') $('#loading').innerHTML = `<div class="loader-seed"></div><p>Поливаем дерево…</p>`;
+  if (name === 'loading') $('#loading').innerHTML = `<div class="loader-seed"></div><p>${T('Поливаем дерево…', 'Watering the tree…')}</p>`;
   if (name === 'error') {
-    $('#loading').innerHTML = `<p class="error-text">${esc(message)}</p><button class="btn" data-action="retry">Попробовать снова</button>`;
+    $('#loading').innerHTML = `<p class="error-text">${esc(message)}</p><button class="btn" data-action="retry">${T('Попробовать снова', 'Try again')}</button>`;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Язык
+// ---------------------------------------------------------------------------
+
+function langSwitch(cls = '') {
+  return `<div class="segmented small lang-switch ${cls}" role="group" aria-label="${T('Язык', 'Language')}">
+    ${LANGS.map(l => `<button aria-selected="${getLang() === l.id}" data-action="set-lang" data-lang="${l.id}">${l.name}</button>`).join('')}
+  </div>`;
+}
+
+// Тексты, которые лежат прямо в index.html (вкладки, заголовок страницы).
+function applyStaticTexts() {
+  document.title = T('Древо жизни', 'Tree of Life');
+  const desc = document.querySelector('meta[name="description"]');
+  if (desc) desc.setAttribute('content', T('Игра для саморазвития: реальные полезные дела растят твоё дерево, а вредные привычки заставляют листья желтеть.', 'A self-improvement game: real useful activities grow your tree, bad habits turn its leaves yellow.'));
+  const tabs = { tree: T('Дерево', 'Tree'), log: T('Отметить', 'Log'), skills: T('Навыки', 'Skills'), materials: T('Материалы', 'Resources'), history: T('История', 'History') };
+  for (const [tab, label] of Object.entries(tabs)) {
+    const span = document.querySelector(`#tabs [data-tab="${tab}"] span`);
+    if (span) span.textContent = label;
+  }
+  $('#tabs')?.setAttribute('aria-label', T('Разделы', 'Sections'));
+  document.querySelector('.scene-wrap')?.setAttribute('aria-label', T('Дерево', 'Tree'));
 }
 
 // ---------------------------------------------------------------------------
@@ -178,18 +208,21 @@ function renderAuth(error = '') {
   $('#auth').innerHTML = `
     <div class="auth-art">${renderTree(demo, THEME_BY_ID.spring, { reduceMotion })}</div>
     <div class="auth-card">
-      <h1 class="logo">Древо жизни</h1>
-      <p class="auth-lead">Каждое полезное дело в жизни растит ветвь твоего дерева. Вредные привычки заставляют листья желтеть. Прогресс, который видно.</p>
+      <div class="auth-top">
+        <h1 class="logo">${T('Древо жизни', 'Tree of Life')}</h1>
+        ${langSwitch('lang-auth')}
+      </div>
+      <p class="auth-lead">${T('Каждое полезное дело в жизни растит ветвь твоего дерева. Вредные привычки заставляют листья желтеть. Прогресс, который видно.', 'Every useful thing you do in real life grows a branch of your tree. Bad habits turn the leaves yellow. Progress you can actually see.')}</p>
       <div class="segmented" role="tablist">
-        <button role="tab" aria-selected="${reg}" data-action="auth-mode" data-mode="register">Новый игрок</button>
-        <button role="tab" aria-selected="${!reg}" data-action="auth-mode" data-mode="login">Уже играю</button>
+        <button role="tab" aria-selected="${reg}" data-action="auth-mode" data-mode="register">${T('Новый игрок', 'New player')}</button>
+        <button role="tab" aria-selected="${!reg}" data-action="auth-mode" data-mode="login">${T('Уже играю', 'I have an account')}</button>
       </div>
       <form id="auth-form" novalidate>
-        ${reg ? `<label class="field"><span>Как тебя зовут</span><input name="name" autocomplete="nickname" maxlength="40" placeholder="Иван"></label>` : ''}
-        <label class="field"><span>Почта</span><input name="email" type="email" autocomplete="email" required placeholder="you@mail.ru"></label>
-        <label class="field"><span>Пароль</span><input name="password" type="password" autocomplete="${reg ? 'new-password' : 'current-password'}" required minlength="6" placeholder="Не короче 6 символов"></label>
+        ${reg ? `<label class="field"><span>${T('Как тебя зовут', 'Your name')}</span><input name="name" autocomplete="nickname" maxlength="40" placeholder="${T('Иван', 'Alex')}"></label>` : ''}
+        <label class="field"><span>${T('Почта', 'Email')}</span><input name="email" type="email" autocomplete="email" required placeholder="${T('you@mail.ru', 'you@example.com')}"></label>
+        <label class="field"><span>${T('Пароль', 'Password')}</span><input name="password" type="password" autocomplete="${reg ? 'new-password' : 'current-password'}" required minlength="6" placeholder="${T('Не короче 6 символов', 'At least 6 characters')}"></label>
         <p class="form-error" role="alert">${esc(error)}</p>
-        <button class="btn btn-primary btn-wide" type="submit">${reg ? 'Посадить своё дерево' : 'Войти'}</button>
+        <button class="btn btn-primary btn-wide" type="submit">${reg ? T('Посадить своё дерево', 'Plant my tree') : T('Войти', 'Log in')}</button>
       </form>
     </div>`;
 }
@@ -199,10 +232,10 @@ async function submitAuth(form) {
   const email = String(fd.get('email') || '').trim();
   const password = String(fd.get('password') || '');
   const name = String(fd.get('name') || '').trim();
-  if (!email || !password) return renderAuth('Заполните почту и пароль');
+  if (!email || !password) return renderAuth(T('Заполните почту и пароль', 'Enter your email and password'));
   const btn = form.querySelector('button[type=submit]');
   btn.disabled = true;
-  btn.textContent = 'Секунду…';
+  btn.textContent = T('Секунду…', 'One moment…');
   try {
     const res = ui.authMode === 'register'
       ? await api.register(email, password, name)
@@ -266,8 +299,8 @@ function setSync(status, msg = '') {
   const el = $('#sync');
   if (!el) return;
   el.dataset.status = status;
-  el.title = { saved: 'Прогресс сохранён', pending: 'Сохраняем…', offline: 'Не удалось сохранить: ' + msg }[status];
-  el.querySelector('span').textContent = { saved: 'Сохранено', pending: 'Сохраняем', offline: 'Нет связи' }[status];
+  el.title = { saved: T('Прогресс сохранён', 'Progress saved'), pending: T('Сохраняем…', 'Saving…'), offline: T('Не удалось сохранить: ', 'Could not save: ') + msg }[status];
+  el.querySelector('span').textContent = { saved: T('Сохранено', 'Saved'), pending: T('Сохраняем', 'Saving'), offline: T('Нет связи', 'Offline') }[status];
 }
 
 function commit() {
@@ -293,7 +326,7 @@ function addEvent(k, ref, t = eventTime(), extra = {}) {
   reportChange(before, after, e);
   if (after.effects[e.id]?.valid) {
     const info = eventInfo(e);
-    showSnack(`${info.icon} ${info.title}`, 'Добавить заметку', () => openNote(e.id));
+    showSnack(`${info.icon} ${info.title}`, T('Добавить заметку', 'Add a note'), () => openNote(e.id));
   }
   haptic(k === 'bad' ? 'warning' : after.player.level > before.player.level || after.effects[e.id]?.streak ? 'success' : 'light');
   commit();
@@ -310,37 +343,37 @@ function removeEvent(id) {
   ui.save.deleted = [...ui.save.deleted, id];
   const after = compute(ui.save);
   commit();
-  if (after.player.level < before.player.level) toast(`Общий уровень откатился до ${after.player.level}`, 'info');
-  else toast('Отметка отменена — дерево пересчитано', 'info');
+  if (after.player.level < before.player.level) toast(T(`Общий уровень откатился до ${after.player.level}`, `Overall level dropped back to ${after.player.level}`), 'info');
+  else toast(T('Отметка отменена — дерево пересчитано', 'Entry undone — the tree was recalculated'), 'info');
 }
 
 function reportChange(before, after, e) {
   const eff = after.effects[e.id];
-  if (!eff || !eff.valid) { toast('Это не засчиталось', 'info'); return; }
+  if (!eff || !eff.valid) { toast(T('Это не засчиталось', 'That didn’t count'), 'info'); return; }
   for (const [sid, xp] of Object.entries(eff.gains)) {
     const sp = SPHERE_BY_ID[sid];
     const sub = eff.sub ? findSub(ui.save, eff.sub) : null;
-    const note = eff.repeat ? ' (повтор за день — опыта меньше)'
-      : eff.over ? ` (больше ${SUB_RULES.dailyFullMinutes / 60} ч за день — опыт медленнее)` : '';
-    const where = sub ? `${sp.icon} ${sub.name}${eff.minutes ? ', ' + formatMinutes(eff.minutes) : ''}` : `${sp.icon} ${sp.name}`;
-    toast(`+${xp} опыта: ${where}${note}`, 'good');
+    const note = eff.repeat ? T(' (повтор за день — опыта меньше)', ' (repeat today — less XP)')
+      : eff.over ? T(` (больше ${SUB_RULES.dailyFullMinutes / 60} ч за день — опыт медленнее)`, ` (over ${SUB_RULES.dailyFullMinutes / 60} h today — slower XP)`) : '';
+    const where = sub ? `${sp.icon} ${sub.name}${eff.minutes ? ', ' + formatMinutes(eff.minutes) : ''}` : `${sp.icon} ${nm(sp)}`;
+    toast(T(`+${xp} опыта: ${where}${note}`, `+${xp} XP: ${where}${note}`), 'good');
     const lb = before.spheres[sid].level; const la = after.spheres[sid].level;
-    if (la > lb) toast(`Ветвь «${sp.name}» выросла до уровня ${la}`, 'level');
+    if (la > lb) toast(T(`Ветвь «${nm(sp)}» выросла до уровня ${la}`, `The ${nm(sp)} branch grew to level ${la}`), 'level');
   }
   const losses = Object.entries(eff.losses);
   if (losses.length) {
-    toast('Листья желтеют: ' + losses.map(([sid, v]) => `${SPHERE_BY_ID[sid].name} −${v}`).join(', '), 'bad');
+    toast(T('Листья желтеют: ', 'Leaves are turning yellow: ') + losses.map(([sid, v]) => `${nm(SPHERE_BY_ID[sid])} −${v}`).join(', '), 'bad');
   }
   if (eff.streak) {
-    const a = findAction(ui.save, e.ref);
-    toast(`🔥 ${eff.streak.days} ${daysWord(eff.streak.days)} подряд: «${a?.name}». Бонус +${eff.streak.bonus}`, 'level');
+    const label = e.k === 'time' ? findSub(ui.save, e.ref)?.name : nm(findAction(ui.save, e.ref));
+    toast(T(`🔥 ${eff.streak.days} ${daysWord(eff.streak.days)} подряд: «${label}». Бонус +${eff.streak.bonus}`, `🔥 ${eff.streak.days} ${daysWord(eff.streak.days)} in a row: “${label}”. Bonus +${eff.streak.bonus}`), 'level');
   } else if (e.k === 'act') {
     const k = after.streaks[e.ref];
-    if (k && k.days >= 2 && after.effects[e.id]?.repeat === 0) toast(`🔥 Огонёк: ${k.days} ${daysWord(k.days)} подряд`, 'info');
+    if (k && k.days >= 2 && after.effects[e.id]?.repeat === 0) toast(T(`🔥 Огонёк: ${k.days} ${daysWord(k.days)} подряд`, `🔥 Streak: ${k.days} ${daysWord(k.days)} in a row`), 'info');
   }
-  if (after.player.level > before.player.level) toast(`Общий уровень ${after.player.level}!`, 'level');
+  if (after.player.level > before.player.level) toast(T(`Общий уровень ${after.player.level}!`, `Overall level ${after.player.level}!`), 'level');
   if (after.stage.name !== before.stage.name && after.player.level > before.player.level) {
-    toast(`Новая стадия: ${after.stage.name}`, 'level');
+    toast(T(`Новая стадия: ${nm(after.stage)}`, `New stage: ${nm(after.stage)}`), 'level');
   }
 }
 
@@ -361,15 +394,12 @@ const FLAME = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2c1 4 5 
 function flameChip(st, actionId) {
   const k = st.streaks[actionId];
   if (!k || !k.days) return '';
-  const title = k.status === 'lit' ? 'дней подряд' : 'дней подряд — продли сегодня';
+  const title = k.status === 'lit' ? T('дней подряд', 'days in a row') : T('дней подряд — продли сегодня', 'days in a row — keep it going today');
   return `<span class="flame-chip is-${k.status}" title="${k.days} ${title}">${FLAME}${k.days}</span>`;
 }
 
 function daysWord(n) {
-  const a = n % 10; const b = n % 100;
-  if (a === 1 && b !== 11) return 'день';
-  if (a >= 2 && a <= 4 && (b < 12 || b > 14)) return 'дня';
-  return 'дней';
+  return plural(n, ['день', 'дня', 'дней'], ['day', 'days']);
 }
 
 function streaksBlock(st) {
@@ -377,42 +407,42 @@ function streaksBlock(st) {
   for (const [id, k] of Object.entries(st.streaks)) if (k.days >= 2) ids.add(id);
   const items = [...ids].map(id => ({ a: findAction(ui.save, id), k: st.streaks[id] || { days: 0, best: 0, status: 'out' } }))
     .filter(x => x.a && !x.a.archived)
-    .sort((x, y) => (y.k.days - x.k.days) || x.a.name.localeCompare(y.a.name));
+    .sort((x, y) => (y.k.days - x.k.days) || nm(x.a).localeCompare(nm(y.a)));
 
   const cards = items.map(({ a, k }) => {
     const sp = SPHERE_BY_ID[a.sphere];
     const pinned = ui.save.tracked.includes(a.id);
     const next = nextMilestone(k.days);
     let status;
-    if (k.status === 'lit') status = 'Горит: сегодня уже сделано';
-    else if (k.status === 'risk') status = 'Сделай сегодня, иначе огонёк погаснет';
-    else status = k.best ? `Погас. Рекорд: ${k.best} ${daysWord(k.best)}` : 'Ещё не зажжён — начни сегодня';
-    const goal = next ? `<small class="muted">До бонуса +${STREAK_MILESTONES[next]}: ещё ${next - k.days} ${daysWord(next - k.days)}</small>` : '';
+    if (k.status === 'lit') status = T('Горит: сегодня уже сделано', 'Lit: done today');
+    else if (k.status === 'risk') status = T('Сделай сегодня, иначе огонёк погаснет', 'Do it today or the streak goes out');
+    else status = k.best ? T(`Погас. Рекорд: ${k.best} ${daysWord(k.best)}`, `Out. Best: ${k.best} ${daysWord(k.best)}`) : T('Ещё не зажжён — начни сегодня', 'Not lit yet — start today');
+    const goal = next ? `<small class="muted">${T(`До бонуса +${STREAK_MILESTONES[next]}: ещё ${next - k.days} ${daysWord(next - k.days)}`, `Bonus +${STREAK_MILESTONES[next]} in ${next - k.days} ${daysWord(next - k.days)}`)}</small>` : '';
     const btn = k.status === 'lit'
-      ? `<span class="tr-done">✓ Сегодня</span>`
-      : `<button class="btn btn-small btn-primary" data-action="log-act" data-id="${a.id}" data-today="1">Сделал сегодня</button>`;
+      ? `<span class="tr-done">✓ ${T('Сегодня', 'Today')}</span>`
+      : `<button class="btn btn-small btn-primary" data-action="log-act" data-id="${a.id}" data-today="1">${T('Сделал сегодня', 'Done today')}</button>`;
     return `
       <div class="tracker is-${k.status}" style="--c:${sp.color}">
         <div class="tr-flame">${FLAME}<b>${k.days}</b></div>
         <div class="tr-body">
-          <strong>${sp.icon} ${esc(a.name)}</strong>
+          <strong>${sp.icon} ${esc(nm(a))}</strong>
           <small>${status}</small>
           ${goal}
         </div>
         <div class="tr-side">
           ${btn}
-          ${pinned ? `<button class="tr-unpin" data-action="untrack" data-id="${a.id}" aria-label="Не следить за огоньком">Убрать</button>` : ''}
+          ${pinned ? `<button class="tr-unpin" data-action="untrack" data-id="${a.id}" aria-label="${T('Не следить за огоньком', 'Stop tracking this streak')}">${T('Убрать', 'Remove')}</button>` : ''}
         </div>
       </div>`;
   }).join('');
 
   return `<section id="streaks-block" class="streaks-block">
     <div class="panel-head">
-      <h2>Огоньки</h2>
-      <p class="muted">Делай одно и то же дело несколько дней подряд — загорится огонёк. На 3, 7, 14, 30, 60 и 100 день — бонус опыта. Пропустил день — огонёк гаснет.</p>
+      <h2>${T('Огоньки', 'Streaks')}</h2>
+      <p class="muted">${T('Делай одно и то же дело несколько дней подряд — загорится огонёк. На 3, 7, 14, 30, 60 и 100 день — бонус опыта. Пропустил день — огонёк гаснет.', 'Do the same thing several days in a row and a streak lights up. Day 3, 7, 14, 30, 60 and 100 give bonus XP. Miss a day and it goes out.')}</p>
     </div>
     ${cards ? `<div class="tracker-list">${cards}</div>` : ''}
-    <button class="btn btn-ghost btn-wide" data-action="add-tracker">Следить за огоньком</button>
+    <button class="btn btn-ghost btn-wide" data-action="add-tracker">${T('Следить за огоньком', 'Track a streak')}</button>
   </section>`;
 }
 
@@ -451,19 +481,19 @@ function renderTopbar(st) {
   const p = st.player;
   $('#topbar').innerHTML = `
     <div class="tb-stage">
-      <div class="tb-level" style="--p:${Math.round(p.progress * 100)}" aria-label="Уровень ${p.level}">${p.level}</div>
+      <div class="tb-level" style="--p:${Math.round(p.progress * 100)}" aria-label="${T('Уровень', 'Level')} ${p.level}">${p.level}</div>
       <div class="tb-text">
-        <strong>${esc(st.stage.name)}</strong>
-        <span>${p.into} / ${p.need} опыта до уровня ${p.level + 1}</span>
+        <strong>${esc(nm(st.stage))}</strong>
+        <span>${T(`${p.into} / ${p.need} опыта до уровня ${p.level + 1}`, `${p.into} / ${p.need} XP to level ${p.level + 1}`)}</span>
       </div>
     </div>
     <div class="tb-right">
-      <button class="streak${st.streak ? '' : ' is-zero'}" data-action="tab" data-tab="log" title="Дней подряд с полезными делами. Нажми, чтобы открыть огоньки">
+      <button class="streak${st.streak ? '' : ' is-zero'}" data-action="tab" data-tab="log" title="${T('Дней подряд с полезными делами. Нажми, чтобы открыть огоньки', 'Days in a row with something useful. Tap to open streaks')}">
         ${FLAME}
         <span>${st.streak}</span>
       </button>
       <div id="sync" class="sync" data-status="${ui.sync}"><i></i><span></span></div>
-      <button class="icon-btn" data-action="settings" aria-label="Настройки и стиль">
+      <button class="icon-btn" data-action="settings" aria-label="${T('Настройки и стиль', 'Settings and style')}">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
       </button>
     </div>`;
@@ -474,24 +504,24 @@ function sceneCaption(st) {
   if (ui.zoom) {
     const sp = SPHERE_BY_ID[ui.zoom];
     return `<div class="zoom-bar">
-      <button class="caption-chip" data-action="zoom-out">← Всё дерево</button>
-      <span class="caption-text">${sp.icon} ${sp.name} крупным планом. Нажми на подветвь, чтобы отметить время.</span>
+      <button class="caption-chip" data-action="zoom-out">← ${T('Всё дерево', 'Whole tree')}</button>
+      <span class="caption-text">${sp.icon} ${T(`${nm(sp)} крупным планом. Нажми на подветвь, чтобы отметить время.`, `${nm(sp)} close up. Tap a sub-branch to log time.`)}</span>
     </div>`;
   }
   if (ui.selected) {
     const sp = SPHERE_BY_ID[ui.selected];
     const s = st.spheres[ui.selected];
-    return `<button class="caption-chip" data-action="open-sphere" data-sphere="${sp.id}">${sp.icon} ${sp.name}: ${s.started ? `уровень ${s.level}, сила ${s.health}%` : 'ещё почка'}</button>`;
+    return `<button class="caption-chip" data-action="open-sphere" data-sphere="${sp.id}">${sp.icon} ${nm(sp)}: ${s.started ? T(`уровень ${s.level}, сила ${s.health}%`, `level ${s.level}, vitality ${s.health}%`) : T('ещё почка', 'still a bud')}</button>`;
   }
   const next = st.stage.next;
-  return `<p class="caption-text">${next ? `До стадии «${next.name}» — общий уровень ${next.level}` : 'Высшая стадия достигнута'}. Нажми на ветку, чтобы рассмотреть её.</p>`;
+  return `<p class="caption-text">${next ? T(`До стадии «${nm(next)}» — общий уровень ${next.level}`, `Next stage “${nm(next)}” at overall level ${next.level}`) : T('Высшая стадия достигнута', 'Highest stage reached')}. ${T('Нажми на ветку, чтобы рассмотреть её.', 'Tap a branch to take a closer look.')}</p>`;
 }
 
 function healthWord(h) {
-  if (h >= 85) return 'цветёт';
-  if (h >= 60) return 'в порядке';
-  if (h >= 35) return 'желтеет';
-  return 'сохнет';
+  if (h >= 85) return T('цветёт', 'blooming');
+  if (h >= 60) return T('в порядке', 'doing fine');
+  if (h >= 35) return T('желтеет', 'turning yellow');
+  return T('сохнет', 'drying out');
 }
 
 // --- Вкладка «Дерево» ---
@@ -499,39 +529,39 @@ function panelTree(st) {
   const started = SPHERES.filter(s => st.spheres[s.id].started).length;
   const intro = st.totalXp === 0 ? `
     <div class="callout">
-      <h3>С чего начать</h3>
-      <p>Твоё дерево пока росток с восемью почками — по одной на каждую сферу жизни. Открой «Отметить» и отметь что-то полезное, что ты сделал сегодня: почка превратится в ветку.</p>
-      <button class="btn btn-primary" data-action="tab" data-tab="log">Отметить первое дело</button>
+      <h3>${T('С чего начать', 'Where to start')}</h3>
+      <p>${T('Твоё дерево пока росток с восемью почками — по одной на каждую сферу жизни. Открой «Отметить» и отметь что-то полезное, что ты сделал сегодня: почка превратится в ветку.', 'Your tree is a sprout with eight buds — one for each area of life. Open “Log” and mark something useful you did today: a bud will turn into a branch.')}</p>
+      <button class="btn btn-primary" data-action="tab" data-tab="log">${T('Отметить первое дело', 'Log your first activity')}</button>
     </div>` : '';
   const rows = SPHERES.map(sp => {
     const s = st.spheres[sp.id];
-    const idle = s.started && s.idleDays > RULES.idleGraceDays ? `<span class="warn">не поливали ${s.idleDays} дн.</span>` : '';
+    const idle = s.started && s.idleDays > RULES.idleGraceDays ? `<span class="warn">${T(`не поливали ${s.idleDays} дн.`, `not watered for ${s.idleDays} d`)}</span>` : '';
     return `
       <button class="sphere-row${ui.selected === sp.id ? ' is-selected' : ''}" data-action="open-sphere" data-sphere="${sp.id}" style="--c:${sp.color}">
         <span class="sr-icon">${sp.icon}</span>
         <span class="sr-main">
-          <span class="sr-top"><strong>${sp.name}</strong><span class="sr-lvl">${s.started ? `ур. ${s.level}` : 'почка'}</span></span>
+          <span class="sr-top"><strong>${nm(sp)}</strong><span class="sr-lvl">${s.started ? T(`ур. ${s.level}`, `lv ${s.level}`) : T('почка', 'bud')}</span></span>
           <span class="bar"><i style="width:${Math.round(s.progress * 100)}%"></i></span>
-          <span class="sr-sub">${s.started ? `${s.into}/${s.need} опыта · сила ${s.health}%, ${healthWord(s.health)}` : 'ещё не начато'}${s.subList.length ? ` · ${s.subList.length} ${subWord(s.subList.length)}` : ''} ${idle}</span>
+          <span class="sr-sub">${s.started ? T(`${s.into}/${s.need} опыта · сила ${s.health}%, ${healthWord(s.health)}`, `${s.into}/${s.need} XP · vitality ${s.health}%, ${healthWord(s.health)}`) : T('ещё не начато', 'not started yet')}${s.subList.length ? ` · ${s.subList.length} ${subWord(s.subList.length)}` : ''} ${idle}</span>
         </span>
       </button>`;
   }).join('');
   return `
     ${intro}
     <div class="panel-head">
-      <h2>Ветви</h2>
-      <p class="muted">${started} из ${SPHERES.length} сфер растут · ${st.totalXp} опыта всего</p>
+      <h2>${T('Ветви', 'Branches')}</h2>
+      <p class="muted">${T(`${started} из ${SPHERES.length} сфер растут · ${st.totalXp} опыта всего`, `${started} of ${SPHERES.length} areas growing · ${st.totalXp} XP in total`)}</p>
     </div>
     <div class="sphere-list">${rows}</div>
     <details class="rules">
-      <summary>Как растёт дерево</summary>
+      <summary>${T('Как растёт дерево', 'How the tree grows')}</summary>
       <ul>
-        <li>Каждое полезное дело даёт опыт своей ветви. Ветвь становится длиннее, на ней больше листьев.</li>
-        <li>Повтор одного и того же дела за день даёт меньше опыта: 100%, потом 50%, потом 20%. Так нельзя «нафармить» уровень.</li>
-        <li>Освоенный навык — это новая веточка с плодом и большой бонус опыта.</li>
-        <li>Вредные привычки отнимают жизненную силу: листья желтеют и опадают, а ветвь растёт медленнее (до половины скорости).</li>
-        <li>Если ветвь не поливать больше ${RULES.idleGraceDays} дней, она понемногу сохнет. Любое полезное дело лечит её.</li>
-        <li>Отметил то, чего не было? Любую отметку можно отменить в «Истории» — дерево честно пересчитается.</li>
+        <li>${T('Каждое полезное дело даёт опыт своей ветви. Ветвь становится длиннее, на ней больше листьев.', 'Every useful activity gives XP to its branch. The branch gets longer and grows more leaves.')}</li>
+        <li>${T('Повтор одного и того же дела за день даёт меньше опыта: 100%, потом 50%, потом 20%. Так нельзя «нафармить» уровень.', 'Repeating the same activity in one day gives less XP: 100%, then 50%, then 20%. No grinding levels.')}</li>
+        <li>${T('Освоенный навык — это новая веточка с плодом и большой бонус опыта.', 'A mastered skill is a new twig with fruit and a big XP bonus.')}</li>
+        <li>${T('Вредные привычки отнимают жизненную силу: листья желтеют и опадают, а ветвь растёт медленнее (до половины скорости).', 'Bad habits drain vitality: leaves turn yellow and fall, and the branch grows slower (down to half speed).')}</li>
+        <li>${T(`Если ветвь не поливать больше ${RULES.idleGraceDays} дней, она понемногу сохнет. Любое полезное дело лечит её.`, `If a branch isn’t watered for more than ${RULES.idleGraceDays} days, it slowly dries out. Any useful activity heals it.`)}</li>
+        <li>${T('Отметил то, чего не было? Любую отметку можно отменить в «Истории» — дерево честно пересчитается.', 'Logged something that didn’t happen? Undo any entry in “History” — the tree recalculates honestly.')}</li>
       </ul>
     </details>`;
 }
@@ -539,8 +569,8 @@ function panelTree(st) {
 // --- Вкладка «Отметить» ---
 function panelLog(st) {
   const t = eventTime();
-  const chips = [{ id: 'all', name: 'Все', icon: '' }, ...SPHERES].map(s =>
-    `<button class="chip${ui.filter === s.id ? ' is-on' : ''}" data-action="filter" data-sphere="${s.id}">${s.icon ? s.icon + ' ' : ''}${s.name}</button>`
+  const chips = [{ id: 'all', name: T('Все', 'All'), icon: '' }, ...SPHERES].map(s =>
+    `<button class="chip${ui.filter === s.id ? ' is-on' : ''}" data-action="filter" data-sphere="${s.id}">${s.icon ? s.icon + ' ' : ''}${nm(s)}</button>`
   ).join('');
   const acts = allActions(ui.save).filter(a => ui.filter === 'all' || a.sphere === ui.filter);
   const actHtml = acts.map(a => {
@@ -550,7 +580,7 @@ function panelLog(st) {
     return `
       <button class="act${n ? ' is-done' : ''}" data-action="log-act" data-id="${a.id}" style="--c:${sp.color}">
         <span class="act-icon">${sp.icon}</span>
-        <span class="act-name">${esc(a.name)}</span>
+        <span class="act-name">${esc(nm(a))}</span>
         ${flameChip(st, a.id)}
         <span class="act-xp">+${Math.round(a.xp * f)}${n ? `<small>×${n}</small>` : ''}</span>
       </button>`;
@@ -559,10 +589,10 @@ function panelLog(st) {
   const bads = allBadHabits(ui.save).map(b => {
     const dmg = Object.entries(b.damage).map(([sid, v]) => `${SPHERE_BY_ID[sid]?.icon || ''}−${v}`).join(' ');
     const clean = st.cleanDays[b.id];
-    const cleanText = clean === undefined ? 'ни разу' : clean === 0 ? 'сегодня' : `${clean} дн. без срыва`;
+    const cleanText = clean === undefined ? T('ни разу', 'never') : clean === 0 ? T('сегодня', 'today') : T(`${clean} дн. без срыва`, `${clean} d clean`);
     return `
       <button class="act act-bad" data-action="log-bad" data-id="${b.id}">
-        <span class="act-name">${esc(b.name)}</span>
+        <span class="act-name">${esc(nm(b))}</span>
         <span class="act-meta">${cleanText}</span>
         <span class="act-xp">${dmg}</span>
       </button>`;
@@ -571,28 +601,28 @@ function panelLog(st) {
   return `
     ${streaksBlock(st)}
     <div class="panel-head spaced">
-      <h2>Что ты сделал?</h2>
+      <h2>${T('Что ты сделал?', 'What did you do?')}</h2>
       <div class="segmented small">
-        <button aria-selected="${ui.logDay === 0}" data-action="log-day" data-day="0">Сегодня</button>
-        <button aria-selected="${ui.logDay === 1}" data-action="log-day" data-day="1">Вчера</button>
+        <button aria-selected="${ui.logDay === 0}" data-action="log-day" data-day="0">${T('Сегодня', 'Today')}</button>
+        <button aria-selected="${ui.logDay === 1}" data-action="log-day" data-day="1">${T('Вчера', 'Yesterday')}</button>
       </div>
     </div>
     <div class="chips">${chips}</div>
-    <div class="act-list">${actHtml || '<p class="muted">Здесь пока пусто.</p>'}</div>
-    <button class="btn btn-ghost btn-wide" data-action="custom-act">Добавить своё дело</button>
+    <div class="act-list">${actHtml || `<p class="muted">${T('Здесь пока пусто.', 'Nothing here yet.')}</p>`}</div>
+    <button class="btn btn-ghost btn-wide" data-action="custom-act">${T('Добавить своё дело', 'Add your own activity')}</button>
 
     <div class="panel-head spaced">
-      <h2>Вредные привычки</h2>
-      <p class="muted">Отмечай честно: так ты увидишь, что на самом деле мешает расти.</p>
+      <h2>${T('Вредные привычки', 'Bad habits')}</h2>
+      <p class="muted">${T('Отмечай честно: так ты увидишь, что на самом деле мешает расти.', 'Be honest: this is how you see what really holds you back.')}</p>
     </div>
     <div class="act-list">${bads}</div>
-    <button class="btn btn-ghost btn-wide" data-action="custom-bad">Добавить свою привычку</button>`;
+    <button class="btn btn-ghost btn-wide" data-action="custom-bad">${T('Добавить свою привычку', 'Add your own habit')}</button>`;
 }
 
 // --- Вкладка «Навыки» ---
 function panelSkills(st) {
   const chips = SPHERES.map(s =>
-    `<button class="chip${ui.skillSphere === s.id ? ' is-on' : ''}" data-action="skill-sphere" data-sphere="${s.id}">${s.icon} ${s.name}</button>`
+    `<button class="chip${ui.skillSphere === s.id ? ' is-on' : ''}" data-action="skill-sphere" data-sphere="${s.id}">${s.icon} ${nm(s)}</button>`
   ).join('');
   const sp = SPHERE_BY_ID[ui.skillSphere];
   const s = st.spheres[sp.id];
@@ -610,21 +640,21 @@ function panelSkills(st) {
     let action = '';
     let note = '';
     if (status === 'done') {
-      action = `<button class="btn btn-small btn-ghost" data-action="undo-skill" data-id="${sk.id}">Откатить</button>`;
-      note = 'Освоено';
+      action = `<button class="btn btn-small btn-ghost" data-action="undo-skill" data-id="${sk.id}">${T('Откатить', 'Undo')}</button>`;
+      note = T('Освоено', 'Mastered');
     } else if (status === 'ready') {
-      action = `<button class="btn btn-small btn-primary" data-action="unlock-skill" data-id="${sk.id}">Я освоил</button>`;
-      note = `+${bonus} опыта`;
+      action = `<button class="btn btn-small btn-primary" data-action="unlock-skill" data-id="${sk.id}">${T('Я освоил', 'I did it')}</button>`;
+      note = T(`+${bonus} опыта`, `+${bonus} XP`);
     } else if (status === 'needLevel') {
-      note = `Откроется на уровне ${sk.minLevel} (сейчас ${s.level})`;
+      note = T(`Откроется на уровне ${sk.minLevel} (сейчас ${s.level})`, `Unlocks at level ${sk.minLevel} (now ${s.level})`);
     } else {
-      note = `Сначала: ${SKILL_BY_ID[sk.parent].name}`;
+      note = T(`Сначала: ${nm(SKILL_BY_ID[sk.parent])}`, `First: ${nm(SKILL_BY_ID[sk.parent])}`);
     }
     return `
       <li class="skill is-${status}" style="--d:${depth(sk)};--c:${sp.color}">
         <span class="skill-dot" aria-hidden="true"></span>
         <span class="skill-body">
-          <strong>${esc(sk.name)}</strong>
+          <strong>${esc(nm(sk))}</strong>
           <small>${note}</small>
         </span>
         ${action}
@@ -633,42 +663,44 @@ function panelSkills(st) {
 
   return `
     <div class="panel-head">
-      <h2>Навыки</h2>
-      <p class="muted">Каждый освоенный навык — новая веточка с плодом. Отмечай, только когда действительно получилось.</p>
+      <h2>${T('Навыки', 'Skills')}</h2>
+      <p class="muted">${T('Каждый освоенный навык — новая веточка с плодом. Отмечай, только когда действительно получилось.', 'Every mastered skill is a new twig with fruit. Only mark it when you’ve really done it.')}</p>
     </div>
     <div class="chips">${chips}</div>
     <div class="skill-summary" style="--c:${sp.color}">
       <span>${sp.icon}</span>
-      <div><strong>${sp.name}</strong><span class="muted">Уровень ${s.level} · освоено ${s.unlocked.length} из ${list.length}</span></div>
+      <div><strong>${nm(sp)}</strong><span class="muted">${T(`Уровень ${s.level} · освоено ${s.unlocked.length} из ${list.length}`, `Level ${s.level} · ${s.unlocked.length} of ${list.length} mastered`)}</span></div>
     </div>
     <ul class="skill-tree">${nodes}</ul>`;
 }
 
 // --- Вкладка «Материалы» ---
 function panelMaterials(st) {
-  const chips = [{ id: 'all', name: 'Все', icon: '' }, ...SPHERES].map(s =>
-    `<button class="chip${ui.matSphere === s.id ? ' is-on' : ''}" data-action="mat-sphere" data-sphere="${s.id}">${s.icon ? s.icon + ' ' : ''}${s.name}</button>`
+  const chips = [{ id: 'all', name: T('Все', 'All'), icon: '' }, ...SPHERES].map(s =>
+    `<button class="chip${ui.matSphere === s.id ? ' is-on' : ''}" data-action="mat-sphere" data-sphere="${s.id}">${s.icon ? s.icon + ' ' : ''}${nm(s)}</button>`
   ).join('');
-  const items = MATERIALS.filter(m => ui.matSphere === 'all' || m.sphere === ui.matSphere).map(m => {
+  // Русскоязычные сайты показываем только на русском, англоязычные — только на английском.
+  const items = MATERIALS.filter(m => (!m.only || m.only === getLang()) && (ui.matSphere === 'all' || m.sphere === ui.matSphere)).map(m => {
     const sp = SPHERE_BY_ID[m.sphere];
     const done = st.learned.has(m.id);
+    const url = nm(m, 'url');
     return `
       <article class="mat${done ? ' is-done' : ''}" style="--c:${sp.color}">
-        <div class="mat-kind">${sp.icon} ${m.kind}</div>
-        <h3>${esc(m.title)}</h3>
-        <p>${esc(m.note)}</p>
+        <div class="mat-kind">${sp.icon} ${esc(nm(m, 'kind'))}</div>
+        <h3>${esc(nm(m, 'title'))}</h3>
+        <p>${esc(nm(m, 'note'))}</p>
         <div class="mat-actions">
-          ${m.url ? `<a class="btn btn-small btn-ghost" href="${esc(m.url)}" target="_blank" rel="noopener noreferrer">Открыть</a>` : '<span class="muted small">Ищи в библиотеке или книжном</span>'}
+          ${url ? `<a class="btn btn-small btn-ghost" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${T('Открыть', 'Open')}</a>` : `<span class="muted small">${T('Ищи в библиотеке или книжном', 'Find it at a library or bookshop')}</span>`}
           ${done
-            ? `<button class="btn btn-small btn-ghost" data-action="undo-mat" data-id="${m.id}">Изучено ✓</button>`
-            : `<button class="btn btn-small btn-primary" data-action="learn" data-id="${m.id}">Изучил · +${RULES.materialXp}</button>`}
+            ? `<button class="btn btn-small btn-ghost" data-action="undo-mat" data-id="${m.id}">${T('Изучено ✓', 'Done ✓')}</button>`
+            : `<button class="btn btn-small btn-primary" data-action="learn" data-id="${m.id}">${T('Изучил', 'Done')} · +${RULES.materialXp}</button>`}
         </div>
       </article>`;
   }).join('');
   return `
     <div class="panel-head">
-      <h2>Материалы</h2>
-      <p class="muted">Книги, курсы и сайты, которые помогут прокачать каждую ветвь.</p>
+      <h2>${T('Материалы', 'Resources')}</h2>
+      <p class="muted">${T('Книги, курсы и сайты, которые помогут прокачать каждую ветвь.', 'Books, courses and websites to help each branch grow.')}</p>
     </div>
     <div class="chips">${chips}</div>
     <div class="mat-list">${items}</div>`;
@@ -677,42 +709,42 @@ function panelMaterials(st) {
 // --- Вкладка «История» ---
 // Название, значок и сфера отметки — для истории и дневника.
 function eventInfo(e) {
-  if (e.k === 'act') { const a = findAction(ui.save, e.ref); return { title: a?.name || 'Удалённое дело', icon: SPHERE_BY_ID[a?.sphere]?.icon || '•', sphere: a?.sphere }; }
-  if (e.k === 'time') { const sb = findSub(ui.save, e.ref); return { title: `${sb?.name || 'Удалённая подветвь'} · ${formatMinutes(Number(e.m) || 0)}`, icon: SPHERE_BY_ID[sb?.sphere]?.icon || '⏱', sphere: sb?.sphere }; }
-  if (e.k === 'bad') { const b = findBad(ui.save, e.ref); return { title: b?.name || 'Удалённая привычка', icon: '🥀', sphere: b ? Object.keys(b.damage || {})[0] : null, bad: true }; }
-  if (e.k === 'skill') { const k = SKILL_BY_ID[e.ref]; return { title: 'Навык: ' + (k?.name || '?'), icon: '🌱', sphere: k?.sphere }; }
-  if (e.k === 'mat') { const m = findMaterial(e.ref); return { title: 'Изучил: ' + (m?.title || '?'), icon: '📖', sphere: m?.sphere }; }
+  if (e.k === 'act') { const a = findAction(ui.save, e.ref); return { title: a ? nm(a) : T('Удалённое дело', 'Deleted activity'), icon: SPHERE_BY_ID[a?.sphere]?.icon || '•', sphere: a?.sphere }; }
+  if (e.k === 'time') { const sb = findSub(ui.save, e.ref); return { title: `${sb?.name || T('Удалённая подветвь', 'Deleted sub-branch')} · ${formatMinutes(Number(e.m) || 0)}`, icon: SPHERE_BY_ID[sb?.sphere]?.icon || '⏱', sphere: sb?.sphere }; }
+  if (e.k === 'bad') { const b = findBad(ui.save, e.ref); return { title: b ? nm(b) : T('Удалённая привычка', 'Deleted habit'), icon: '🥀', sphere: b ? Object.keys(b.damage || {})[0] : null, bad: true }; }
+  if (e.k === 'skill') { const k = SKILL_BY_ID[e.ref]; return { title: T('Навык: ', 'Skill: ') + (k ? nm(k) : '?'), icon: '🌱', sphere: k?.sphere }; }
+  if (e.k === 'mat') { const m = findMaterial(e.ref); return { title: T('Изучил: ', 'Studied: ') + (m ? nm(m, 'title') || m.title || m.title_en : '?'), icon: '📖', sphere: m?.sphere }; }
   return { title: '?', icon: '•', sphere: null };
 }
 
 function fmtDay(t) {
   const k = dayKey(t);
-  if (k === dayKey(Date.now())) return 'Сегодня';
-  if (k === dayKey(Date.now() - DAY)) return 'Вчера';
-  return new Date(t).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', weekday: 'short' });
+  if (k === dayKey(Date.now())) return T('Сегодня', 'Today');
+  if (k === dayKey(Date.now() - DAY)) return T('Вчера', 'Yesterday');
+  return new Date(t).toLocaleDateString(locale(), { day: 'numeric', month: 'long', weekday: 'short' });
 }
-const fmtTime = (t) => new Date(t).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+const fmtTime = (t) => new Date(t).toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' });
 const hasNote = (e) => Boolean(e.note || e.mood);
 
 function panelHistory(st) {
   const notes = ui.save.events.filter(hasNote).length;
   const head = `
     <div class="panel-head">
-      <h2>${ui.histMode === 'diary' ? 'Дневник' : 'История'}</h2>
+      <h2>${ui.histMode === 'diary' ? T('Дневник', 'Journal') : T('История', 'History')}</h2>
       <div class="segmented small">
-        <button aria-selected="${ui.histMode === 'all'}" data-action="hist-mode" data-mode="all">Отметки</button>
-        <button aria-selected="${ui.histMode === 'diary'}" data-action="hist-mode" data-mode="diary">Дневник${notes ? ` · ${notes}` : ''}</button>
+        <button aria-selected="${ui.histMode === 'all'}" data-action="hist-mode" data-mode="all">${T('Отметки', 'Entries')}</button>
+        <button aria-selected="${ui.histMode === 'diary'}" data-action="hist-mode" data-mode="diary">${T('Дневник', 'Journal')}${notes ? ` · ${notes}` : ''}</button>
       </div>
       <p class="muted">${ui.histMode === 'diary'
-        ? 'Твои заметки к делам: что получилось, что мешало, какие мысли. Добавить заметку можно сразу после отметки или кнопкой ✎ в отметках.'
-        : 'Понял, что был не так хорош, как отметил? Отмени — дерево пересчитается честно. Кнопка ✎ — заметка к делу.'}</p>
+        ? T('Твои заметки к делам: что получилось, что мешало, какие мысли. Добавить заметку можно сразу после отметки или кнопкой ✎ в отметках.', 'Your notes on activities: what worked, what got in the way, your thoughts. Add a note right after logging or with the ✎ button in entries.')
+        : T('Понял, что был не так хорош, как отметил? Отмени — дерево пересчитается честно. Кнопка ✎ — заметка к делу.', 'Realised you logged more than you did? Undo it — the tree recalculates honestly. The ✎ button adds a note.')}</p>
     </div>`;
   if (ui.histMode === 'diary') return head + panelDiary(st);
 
   const events = [...ui.save.events].sort((a, b) => b.t - a.t).slice(0, 200);
   if (!events.length) {
-    return head + `<div class="callout"><p>Здесь будут все твои отметки. Любую можно отменить, если понял, что поторопился.</p>
-      <button class="btn btn-primary" data-action="tab" data-tab="log">Отметить первое дело</button></div>`;
+    return head + `<div class="callout"><p>${T('Здесь будут все твои отметки. Любую можно отменить, если понял, что поторопился.', 'All your entries will appear here. You can undo any of them if you were too quick.')}</p>
+      <button class="btn btn-primary" data-action="tab" data-tab="log">${T('Отметить первое дело', 'Log your first activity')}</button></div>`;
   }
   let html = '';
   let lastDay = '';
@@ -722,9 +754,9 @@ function panelHistory(st) {
     const eff = st.effects[e.id] || { gains: {}, losses: {} };
     const { title, icon } = eventInfo(e);
     const fx = [
-      ...Object.entries(eff.gains).map(([sid, v]) => `<span class="fx-good">+${v} ${SPHERE_BY_ID[sid].name}</span>`),
-      ...Object.entries(eff.losses).map(([sid, v]) => `<span class="fx-bad">−${v} сила: ${SPHERE_BY_ID[sid].name}</span>`),
-    ].join(' ') || '<span class="muted">не засчитано</span>';
+      ...Object.entries(eff.gains).map(([sid, v]) => `<span class="fx-good">+${v} ${nm(SPHERE_BY_ID[sid])}</span>`),
+      ...Object.entries(eff.losses).map(([sid, v]) => `<span class="fx-bad">−${v} ${T('сила', 'vitality')}: ${nm(SPHERE_BY_ID[sid])}</span>`),
+    ].join(' ') || `<span class="muted">${T('не засчитано', 'didn’t count')}</span>`;
     const note = hasNote(e)
       ? `<button class="hist-note" data-action="note" data-id="${e.id}">${e.mood ? MOODS[e.mood - 1] + ' ' : ''}${esc((e.note || '').slice(0, 140))}${(e.note || '').length > 140 ? '…' : ''}</button>`
       : '';
@@ -733,8 +765,8 @@ function panelHistory(st) {
         <span class="hist-icon">${icon}</span>
         <span class="hist-body"><strong>${esc(title)}</strong><small>${fmtTime(e.t)} · ${fx}</small>${note}</span>
         <span class="hist-actions">
-          <button class="icon-btn small${hasNote(e) ? ' is-on' : ''}" data-action="note" data-id="${e.id}" aria-label="${hasNote(e) ? 'Изменить заметку' : 'Добавить заметку'}" title="Заметка">✎</button>
-          <button class="btn btn-small btn-ghost" data-action="undo" data-id="${e.id}">Отменить</button>
+          <button class="icon-btn small${hasNote(e) ? ' is-on' : ''}" data-action="note" data-id="${e.id}" aria-label="${hasNote(e) ? T('Изменить заметку', 'Edit note') : T('Добавить заметку', 'Add a note')}" title="${T('Заметка', 'Note')}">✎</button>
+          <button class="btn btn-small btn-ghost" data-action="undo" data-id="${e.id}">${T('Отменить', 'Undo')}</button>
         </span>
       </div>`;
   }
@@ -745,21 +777,21 @@ function panelDiary(st) {
   const all = ui.save.events.filter(hasNote);
   if (!all.length) {
     return `<div class="callout">
-      <h3>Дневник пока пуст</h3>
-      <p>Отметь дело — внизу появится кнопка «Добавить заметку». Напиши пару слов: что получилось, что было трудно, как настроение. Здесь соберётся твой дневник прогресса.</p>
-      <button class="btn btn-primary" data-action="tab" data-tab="log">Отметить дело</button>
+      <h3>${T('Дневник пока пуст', 'Your journal is empty')}</h3>
+      <p>${T('Отметь дело — внизу появится кнопка «Добавить заметку». Напиши пару слов: что получилось, что было трудно, как настроение. Здесь соберётся твой дневник прогресса.', 'Log an activity and an “Add a note” button appears at the bottom. Write a few words: what worked, what was hard, how you feel. Your progress journal builds up here.')}</p>
+      <button class="btn btn-primary" data-action="tab" data-tab="log">${T('Отметить дело', 'Log an activity')}</button>
     </div>`;
   }
   const spheresUsed = new Set(all.map(e => eventInfo(e).sphere).filter(Boolean));
-  const chips = [{ id: 'all', name: 'Все', icon: '' }, ...SPHERES.filter(sp => spheresUsed.has(sp.id))].map(sp =>
-    `<button class="chip${ui.diarySphere === sp.id ? ' is-on' : ''}" data-action="diary-sphere" data-sphere="${sp.id}">${sp.icon ? sp.icon + ' ' : ''}${sp.name}</button>`).join('');
+  const chips = [{ id: 'all', name: T('Все', 'All'), icon: '' }, ...SPHERES.filter(sp => spheresUsed.has(sp.id))].map(sp =>
+    `<button class="chip${ui.diarySphere === sp.id ? ' is-on' : ''}" data-action="diary-sphere" data-sphere="${sp.id}">${sp.icon ? sp.icon + ' ' : ''}${nm(sp)}</button>`).join('');
   return `
-    <label class="field diary-search"><span class="sr-only">Поиск по дневнику</span>
-      <input id="diary-search" type="search" placeholder="Поиск по заметкам" value="${esc(ui.diaryQuery)}" autocomplete="off">
+    <label class="field diary-search"><span class="sr-only">${T('Поиск по дневнику', 'Search the journal')}</span>
+      <input id="diary-search" type="search" placeholder="${T('Поиск по заметкам', 'Search notes')}" value="${esc(ui.diaryQuery)}" autocomplete="off">
     </label>
     <div class="chips">${chips}</div>
     <div id="diary-list" class="diary-list">${diaryList()}</div>
-    ${TG.wa ? '' : '<button class="btn btn-ghost btn-wide" data-action="diary-export">Скачать дневник текстом</button>'}`;
+    ${TG.wa ? '' : `<button class="btn btn-ghost btn-wide" data-action="diary-export">${T('Скачать дневник текстом', 'Download journal as text')}</button>`}`;
 }
 
 function diaryEntries() {
@@ -772,7 +804,7 @@ function diaryEntries() {
 
 function diaryList() {
   const items = diaryEntries();
-  if (!items.length) return '<p class="muted">Ничего не нашлось.</p>';
+  if (!items.length) return `<p class="muted">${T('Ничего не нашлось.', 'Nothing found.')}</p>`;
   let html = '';
   let lastDay = '';
   for (const { e, info } of items) {
@@ -787,8 +819,8 @@ function diaryList() {
         </header>
         ${e.note ? `<p class="de-text">${esc(e.note)}</p>` : ''}
         <footer>
-          ${e.mood ? `<span class="de-mood" title="Настроение">${MOODS[e.mood - 1]}</span>` : '<span></span>'}
-          <button class="link-btn" data-action="note" data-id="${e.id}">Изменить</button>
+          ${e.mood ? `<span class="de-mood" title="${T('Настроение', 'Mood')}">${MOODS[e.mood - 1]}</span>` : '<span></span>'}
+          <button class="link-btn" data-action="note" data-id="${e.id}">${T('Изменить', 'Edit')}</button>
         </footer>
       </article>`;
   }
@@ -797,13 +829,13 @@ function diaryList() {
 
 function exportDiary() {
   const items = diaryEntries().reverse();
-  const text = 'Дневник — Древо жизни\n\n' + items.map(({ e, info }) =>
-    `${new Date(e.t).toLocaleString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}\n` +
+  const text = T('Дневник — Древо жизни', 'Journal — Tree of Life') + '\n\n' + items.map(({ e, info }) =>
+    `${new Date(e.t).toLocaleString(locale(), { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}\n` +
     `${info.title}${e.mood ? '  ' + MOODS[e.mood - 1] : ''}\n${e.note || ''}`).join('\n\n———\n\n');
   const url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
   const a = document.createElement('a');
   a.href = url;
-  a.download = `dnevnik-${dayKey(Date.now())}.txt`;
+  a.download = `${T('dnevnik', 'journal')}-${dayKey(Date.now())}.txt`;
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -814,23 +846,23 @@ function openNote(eventId) {
   const e = ui.save.events.find(x => x.id === eventId);
   if (!e) return;
   const info = eventInfo(e);
-  const when = new Date(e.t).toLocaleString('ru-RU', { day: 'numeric', month: 'long', weekday: 'long', hour: '2-digit', minute: '2-digit' });
+  const when = new Date(e.t).toLocaleString(locale(), { day: 'numeric', month: 'long', weekday: 'long', hour: '2-digit', minute: '2-digit' });
   openSheet(`
     <h2>${info.icon} ${esc(info.title)}</h2>
     <p class="small">${when}</p>
     <form id="sheet-form" novalidate>
-      <fieldset class="field mood-field"><legend>Настроение</legend>
+      <fieldset class="field mood-field"><legend>${T('Настроение', 'Mood')}</legend>
         <div class="mood-row">${MOODS.map((m, i) => `
           <label class="mood"><input type="radio" name="mood" value="${i + 1}"${e.mood === i + 1 ? ' checked' : ''}><span>${m}</span></label>`).join('')}
         </div>
       </fieldset>
-      <label class="field"><span>Заметка</span>
-        <textarea name="note" rows="6" maxlength="2000" placeholder="${info.bad ? 'Что привело к срыву? Что поможет в следующий раз?' : 'Что получилось? Что было трудно? Что понял?'}">${esc(e.note || '')}</textarea>
+      <label class="field"><span>${T('Заметка', 'Note')}</span>
+        <textarea name="note" rows="6" maxlength="2000" placeholder="${info.bad ? T('Что привело к срыву? Что поможет в следующий раз?', 'What led to the slip? What will help next time?') : T('Что получилось? Что было трудно? Что понял?', 'What worked? What was hard? What did you learn?')}">${esc(e.note || '')}</textarea>
       </label>
       <div class="sheet-actions">
-        ${hasNote(e) ? '<button type="button" class="btn btn-ghost" data-action="note-delete" data-id="' + e.id + '">Удалить</button>' : ''}
-        <button type="button" class="btn btn-ghost" data-action="close-sheet">Отмена</button>
-        <button class="btn btn-primary" type="submit">Сохранить</button>
+        ${hasNote(e) ? `<button type="button" class="btn btn-ghost" data-action="note-delete" data-id="${e.id}">${T('Удалить', 'Delete')}</button>` : ''}
+        <button type="button" class="btn btn-ghost" data-action="close-sheet">${T('Отмена', 'Cancel')}</button>
+        <button class="btn btn-primary" type="submit">${T('Сохранить', 'Save')}</button>
       </div>
     </form>`, (fd) => {
     const note = String(fd.get('note') || '').trim().slice(0, 2000);
@@ -839,7 +871,7 @@ function openNote(eventId) {
     if (mood) e.mood = mood; else delete e.mood;
     e.ne = Date.now();
     commit();
-    toast(note || mood ? 'Заметка сохранена в дневнике' : 'Заметка удалена', 'info');
+    toast(note || mood ? T('Заметка сохранена в дневнике', 'Note saved to your journal') : T('Заметка удалена', 'Note deleted'), 'info');
   });
   // Курсор сразу в поле заметки, если это компьютер.
   if (window.matchMedia('(pointer: fine)').matches) setTimeout(() => $('#sheet textarea')?.focus(), 40);
@@ -921,7 +953,7 @@ function confirmSheet(title, text, okLabel, onOk, danger = false) {
     <h2>${title}</h2>
     <p>${text}</p>
     <div class="sheet-actions">
-      <button class="btn btn-ghost" data-action="close-sheet">Отмена</button>
+      <button class="btn btn-ghost" data-action="close-sheet">${T('Отмена', 'Cancel')}</button>
       <button class="btn ${danger ? 'btn-danger' : 'btn-primary'}" data-action="sheet-ok">${okLabel}</button>
     </div>`, () => { onOk(); });
 }
@@ -971,10 +1003,7 @@ function maybeStartTour() {
 // ---------------------------------------------------------------------------
 
 function subWord(n) {
-  const a = n % 10; const b = n % 100;
-  if (a === 1 && b !== 11) return 'подветвь';
-  if (a >= 2 && a <= 4 && (b < 12 || b > 14)) return 'подветви';
-  return 'подветвей';
+  return plural(n, ['подветвь', 'подветви', 'подветвей'], ['sub-branch', 'sub-branches']);
 }
 
 function animateViewBox(svg, from, to, ms) {
@@ -1055,31 +1084,32 @@ function panelBranch(st) {
   const rows = [...subs].sort((a, b) => periodValue(b, kind) - periodValue(a, kind) || a.order - b.order);
   const max = Math.max(1, ...rows.map(x => periodValue(x, kind)));
   const sum = rows.reduce((a, x) => a + periodValue(x, kind), 0);
-  const periodName = { week: 'за неделю', month: 'за месяц', all: 'за всё время' }[ui.subPeriod];
+  const periodName = { week: T('за неделю', 'this week'), month: T('за месяц', 'this month'), all: T('за всё время', 'all time') }[ui.subPeriod];
 
   let insight = '';
   if (subs.length >= 2 && sum > 0) {
     const top = rows[0];
     const neglected = subs.filter(x => x.idleDays == null || x.idleDays >= SUB_RULES.neglectDays)
       .sort((a, b) => (b.idleDays ?? 1e9) - (a.idleDays ?? 1e9))[0];
-    insight = `<p class="insight">Больше всего ${byMinutes ? 'времени' : 'опыта'} ${periodName}: <b>${esc(top.name)}</b> — ${Math.round(periodValue(top, kind) / sum * 100)}%.` +
-      (neglected ? ` Давно не поливал: <b>${esc(neglected.name)}</b>${neglected.idleDays == null ? ' (ещё ни разу)' : ` — ${neglected.idleDays} ${daysWord(neglected.idleDays)}`}.` : '') + '</p>';
+    const pct = Math.round(periodValue(top, kind) / sum * 100);
+    insight = `<p class="insight">${T(`Больше всего ${byMinutes ? 'времени' : 'опыта'} ${periodName}: <b>${esc(top.name)}</b> — ${pct}%.`, `Most ${byMinutes ? 'time' : 'XP'} ${periodName}: <b>${esc(top.name)}</b> — ${pct}%.`)}` +
+      (neglected ? ' ' + T(`Давно не поливал: <b>${esc(neglected.name)}</b>${neglected.idleDays == null ? ' (ещё ни разу)' : ` — ${neglected.idleDays} ${daysWord(neglected.idleDays)}`}.`, `Neglected for a while: <b>${esc(neglected.name)}</b>${neglected.idleDays == null ? ' (never yet)' : ` — ${neglected.idleDays} ${daysWord(neglected.idleDays)}`}.`) : '') + '</p>';
   }
 
   const subRows = rows.map((sb) => {
     const i = subs.indexOf(sb);
     const v = periodValue(sb, kind);
     const minutesP = periodValue(sb, 'minutes');
-    const idle = sb.idleDays == null ? 'ещё не начато' : sb.idleDays === 0 ? 'сегодня' : sb.idleDays === 1 ? 'вчера' : `${sb.idleDays} ${daysWord(sb.idleDays)} назад`;
+    const idle = sb.idleDays == null ? T('ещё не начато', 'not started yet') : sb.idleDays === 0 ? T('сегодня', 'today') : sb.idleDays === 1 ? T('вчера', 'yesterday') : T(`${sb.idleDays} ${daysWord(sb.idleDays)} назад`, `${sb.idleDays} ${daysWord(sb.idleDays)} ago`);
     const warn = sb.idleDays == null || sb.idleDays >= SUB_RULES.neglectDays;
     return `
       <div class="sub-row" style="--c:${subColor(sp.color, i)}">
         <button class="sub-main" data-action="sub-menu" data-id="${sb.id}">
-          <span class="sub-top"><strong>${esc(sb.name)}</strong>${flameChip(st, sb.id)}<span class="sub-lvl">ур. ${sb.level}</span></span>
+          <span class="sub-top"><strong>${esc(sb.name)}</strong>${flameChip(st, sb.id)}<span class="sub-lvl">${T('ур.', 'lv')} ${sb.level}</span></span>
           <span class="bar"><i style="width:${Math.round(v / max * 100)}%"></i></span>
-          <span class="sub-meta">${minutesP ? formatMinutes(minutesP) : '0 мин'} ${periodName} · ${sb.xp} опыта всего · <span class="${warn ? 'warn' : ''}">${idle}</span></span>
+          <span class="sub-meta">${formatMinutes(minutesP)} ${periodName} · ${T(`${sb.xp} опыта всего`, `${sb.xp} XP total`)} · <span class="${warn ? 'warn' : ''}">${idle}</span></span>
         </button>
-        <button class="btn btn-small btn-primary" data-action="log-time" data-id="${sb.id}" aria-label="Отметить время: ${esc(sb.name)}">+ время</button>
+        <button class="btn btn-small btn-primary" data-action="log-time" data-id="${sb.id}" aria-label="${T('Отметить время', 'Log time')}: ${esc(sb.name)}">+ ${T('время', 'time')}</button>
       </div>`;
   }).join('');
 
@@ -1087,84 +1117,85 @@ function panelBranch(st) {
   return `
     <div class="sphere-head" style="--c:${sp.color}">
       <span class="sh-icon">${sp.icon}</span>
-      <div><h2>${sp.name}</h2><p class="muted">${s.started ? `Уровень ${s.level} · ${s.into}/${s.need} опыта` : 'Ветвь ещё не проросла'}</p></div>
+      <div><h2>${nm(sp)}</h2><p class="muted">${s.started ? T(`Уровень ${s.level} · ${s.into}/${s.need} опыта`, `Level ${s.level} · ${s.into}/${s.need} XP`) : T('Ветвь ещё не проросла', 'This branch hasn’t sprouted yet')}</p></div>
     </div>
     <div class="meters">
-      <div><span>Опыт до уровня ${s.level + 1}</span><div class="bar"><i style="width:${Math.round(s.progress * 100)}%;background:${sp.color}"></i></div></div>
-      <div><span>Жизненная сила: ${s.health}% — ${healthWord(s.health)}</span><div class="bar"><i style="width:${s.health}%;background:${s.health >= 60 ? 'var(--good)' : s.health >= 35 ? '#E0A526' : 'var(--bad)'}"></i></div></div>
+      <div><span>${T(`Опыт до уровня ${s.level + 1}`, `XP to level ${s.level + 1}`)}</span><div class="bar"><i style="width:${Math.round(s.progress * 100)}%;background:${sp.color}"></i></div></div>
+      <div><span>${T('Жизненная сила', 'Vitality')}: ${s.health}% — ${healthWord(s.health)}</span><div class="bar"><i style="width:${s.health}%;background:${s.health >= 60 ? 'var(--good)' : s.health >= 35 ? '#E0A526' : 'var(--bad)'}"></i></div></div>
     </div>
 
     <div class="panel-head spaced">
-      <h2>Подветви</h2>
+      <h2>${T('Подветви', 'Sub-branches')}</h2>
       ${subs.length ? `<div class="segmented small">
-        <button aria-selected="${ui.subPeriod === 'week'}" data-action="sub-period" data-period="week">Неделя</button>
-        <button aria-selected="${ui.subPeriod === 'month'}" data-action="sub-period" data-period="month">Месяц</button>
-        <button aria-selected="${ui.subPeriod === 'all'}" data-action="sub-period" data-period="all">Всё</button>
+        <button aria-selected="${ui.subPeriod === 'week'}" data-action="sub-period" data-period="week">${T('Неделя', 'Week')}</button>
+        <button aria-selected="${ui.subPeriod === 'month'}" data-action="sub-period" data-period="month">${T('Месяц', 'Month')}</button>
+        <button aria-selected="${ui.subPeriod === 'all'}" data-action="sub-period" data-period="all">${T('Всё', 'All')}</button>
       </div>` : ''}
       <p class="muted">${subs.length
-        ? 'Раздели ветвь на части — предметы, виды спорта, проекты — и отмечай время на каждую. Сразу видно, чему уделяешь больше, а что забросил.'
-        : 'Ветвь можно разделить на подветви: например, «Разум» — на предметы в вузе. Отмечай время на каждую, и станет видно, чему ты уделяешь больше, а что забросил.'}</p>
+        ? T('Раздели ветвь на части — предметы, виды спорта, проекты — и отмечай время на каждую. Сразу видно, чему уделяешь больше, а что забросил.', 'Split a branch into parts — subjects, sports, projects — and log time for each. You’ll see right away what gets most of your time and what you’ve neglected.')
+        : T('Ветвь можно разделить на подветви: например, «Разум» — на предметы в вузе. Отмечай время на каждую, и станет видно, чему ты уделяешь больше, а что забросил.', 'A branch can be split into sub-branches: for example, “Mind” into your university subjects. Log time for each and you’ll see what gets most attention and what you’ve neglected.')}</p>
     </div>
     ${insight}
     ${subRows ? `<div class="sub-list">${subRows}</div>` : ''}
-    ${subs.length < SUB_RULES.maxPerSphere ? `<button class="btn ${subs.length ? 'btn-ghost' : 'btn-primary'} btn-wide" data-action="add-sub">Добавить подветвь</button>` : ''}
+    ${subs.length < SUB_RULES.maxPerSphere ? `<button class="btn ${subs.length ? 'btn-ghost' : 'btn-primary'} btn-wide" data-action="add-sub">${T('Добавить подветвь', 'Add a sub-branch')}</button>` : ''}
 
     <div class="panel-head spaced">
-      <h2>Дела ветви</h2>
+      <h2>${T('Дела ветви', 'Branch activities')}</h2>
       <div class="segmented small">
-        <button aria-selected="${ui.logDay === 0}" data-action="log-day" data-day="0">Сегодня</button>
-        <button aria-selected="${ui.logDay === 1}" data-action="log-day" data-day="1">Вчера</button>
+        <button aria-selected="${ui.logDay === 0}" data-action="log-day" data-day="0">${T('Сегодня', 'Today')}</button>
+        <button aria-selected="${ui.logDay === 1}" data-action="log-day" data-day="1">${T('Вчера', 'Yesterday')}</button>
       </div>
     </div>
     <div class="act-list">
       ${acts.map(a => {
         const sb = a.sub ? findSub(ui.save, a.sub) : null;
         return `<button class="act" data-action="log-act" data-id="${a.id}" style="--c:${sp.color}">
-        <span class="act-name">${esc(a.name)}${sb ? `<small class="act-sub">${esc(sb.name)}</small>` : ''}</span>${flameChip(st, a.id)}<span class="act-xp">+${Math.round(a.xp * RULES.repeatFactors[Math.min(countOnDay(st, a.id, t), 2)])}</span></button>`;
+        <span class="act-name">${esc(nm(a))}${sb ? `<small class="act-sub">${esc(sb.name)}</small>` : ''}</span>${flameChip(st, a.id)}<span class="act-xp">+${Math.round(a.xp * RULES.repeatFactors[Math.min(countOnDay(st, a.id, t), 2)])}</span></button>`;
       }).join('')}
     </div>
     <div class="sheet-actions">
-      <button class="btn btn-ghost" data-action="custom-act" data-sphere="${sp.id}">Своё дело</button>
-      <button class="btn btn-ghost" data-action="branch-notes" data-sphere="${sp.id}">Заметки ветви</button>
-      <button class="btn btn-ghost" data-action="goto-skills" data-sphere="${sp.id}">Навыки ветви</button>
+      <button class="btn btn-ghost" data-action="custom-act" data-sphere="${sp.id}">${T('Своё дело', 'Own activity')}</button>
+      <button class="btn btn-ghost" data-action="branch-notes" data-sphere="${sp.id}">${T('Заметки ветви', 'Branch notes')}</button>
+      <button class="btn btn-ghost" data-action="goto-skills" data-sphere="${sp.id}">${T('Навыки ветви', 'Branch skills')}</button>
     </div>`;
 }
 
+// Подсказки названий подветвей: [по-русски, по-английски].
 const SUB_SUGGESTIONS = {
-  health: ['Бег', 'Зал', 'Плавание', 'Йога', 'Велосипед', 'Футбол'],
-  mind: ['Математика', 'Английский', 'Физика', 'Программирование', 'История', 'Чтение'],
-  career: ['Учёба по профессии', 'Свой проект', 'Портфолио', 'Подработка', 'Стажировка'],
-  finance: ['Бюджет', 'Накопления', 'Инвестиции', 'Подработка'],
-  social: ['Семья', 'Друзья', 'Отношения', 'Новые знакомства'],
-  creative: ['Рисование', 'Музыка', 'Фото', 'Писательство', 'Видео'],
-  soul: ['Медитация', 'Дневник', 'Прогулки', 'Чтение для души'],
-  home: ['Готовка', 'Уборка', 'Ремонт', 'Растения'],
+  health: [['Бег', 'Running'], ['Зал', 'Gym'], ['Плавание', 'Swimming'], ['Йога', 'Yoga'], ['Велосипед', 'Cycling'], ['Футбол', 'Football']],
+  mind: [['Математика', 'Maths'], ['Английский', 'Foreign language'], ['Физика', 'Physics'], ['Программирование', 'Programming'], ['История', 'History'], ['Чтение', 'Reading']],
+  career: [['Учёба по профессии', 'Job training'], ['Свой проект', 'Side project'], ['Портфолио', 'Portfolio'], ['Подработка', 'Part-time job'], ['Стажировка', 'Internship']],
+  finance: [['Бюджет', 'Budget'], ['Накопления', 'Savings'], ['Инвестиции', 'Investing'], ['Подработка', 'Side income']],
+  social: [['Семья', 'Family'], ['Друзья', 'Friends'], ['Отношения', 'Partner'], ['Новые знакомства', 'Meeting people']],
+  creative: [['Рисование', 'Drawing'], ['Музыка', 'Music'], ['Фото', 'Photography'], ['Писательство', 'Writing'], ['Видео', 'Video']],
+  soul: [['Медитация', 'Meditation'], ['Дневник', 'Journaling'], ['Прогулки', 'Walks'], ['Чтение для души', 'Reading for fun']],
+  home: [['Готовка', 'Cooking'], ['Уборка', 'Cleaning'], ['Ремонт', 'Repairs'], ['Растения', 'Plants']],
 };
 
 function openAddSub(sphereId) {
   const sp = SPHERE_BY_ID[sphereId];
   const taken = new Set(subsOf(ui.save, sphereId).map(x => x.name.toLowerCase()));
-  const ideas = (SUB_SUGGESTIONS[sphereId] || []).filter(x => !taken.has(x.toLowerCase()));
+  const ideas = (SUB_SUGGESTIONS[sphereId] || []).map(([ru, en]) => T(ru, en)).filter(x => !taken.has(x.toLowerCase()));
   openSheet(`
-    <h2>Новая подветвь: ${sp.icon} ${sp.name}</h2>
+    <h2>${T('Новая подветвь', 'New sub-branch')}: ${sp.icon} ${nm(sp)}</h2>
     <form id="sheet-form" novalidate>
-      <label class="field"><span>Название</span><input name="name" maxlength="30" required placeholder="Например: ${esc(ideas[0] || 'Матанализ')}"></label>
+      <label class="field"><span>${T('Название', 'Name')}</span><input name="name" maxlength="30" required placeholder="${T('Например', 'For example')}: ${esc(ideas[0] || T('Матанализ', 'Calculus'))}"></label>
       ${ideas.length ? `<div class="chips wrap">${ideas.map(x => `<button type="button" class="chip" data-action="fill-sub" data-name="${esc(x)}">${esc(x)}</button>`).join('')}</div>` : ''}
       <p class="form-error" role="alert"></p>
       <div class="sheet-actions">
-        <button type="button" class="btn btn-ghost" data-action="close-sheet">Отмена</button>
-        <button class="btn btn-primary" type="submit">Добавить</button>
+        <button type="button" class="btn btn-ghost" data-action="close-sheet">${T('Отмена', 'Cancel')}</button>
+        <button class="btn btn-primary" type="submit">${T('Добавить', 'Add')}</button>
       </div>
     </form>`, (fd) => {
     const name = String(fd.get('name') || '').trim().slice(0, 30);
     const err = $('#sheet .form-error');
-    if (!name) { err.textContent = 'Напиши название'; return false; }
-    if (taken.has(name.toLowerCase())) { err.textContent = 'Такая подветвь уже есть'; return false; }
+    if (!name) { err.textContent = T('Напиши название', 'Enter a name'); return false; }
+    if (taken.has(name.toLowerCase())) { err.textContent = T('Такая подветвь уже есть', 'That sub-branch already exists'); return false; }
     const order = Math.max(-1, ...ui.save.custom.subs.filter(x => x.sphere === sphereId).map(x => x.order ?? 0)) + 1;
     const id = 'sb_' + uid();
     ui.save.custom.subs.push({ id, sphere: sphereId, name, order, createdAt: Date.now() });
     commit();
-    toast(`Подветвь «${name}» проросла`, 'good');
+    toast(T(`Подветвь «${name}» проросла`, `Sub-branch “${name}” has sprouted`), 'good');
     haptic('success');
     setTimeout(() => openLogTime(id, true), 150);
   });
@@ -1177,24 +1208,24 @@ function openLogTime(subId, fresh = false) {
   const presets = [15, 30, 45, 60, 90, 120, 180];
   openSheet(`
     <h2>${sp.icon} ${esc(sb.name)}</h2>
-    <p>${fresh ? 'Сколько времени ты уже уделил этому? Можно пропустить и отметить потом.' : 'Сколько времени ты на это потратил?'}</p>
+    <p>${fresh ? T('Сколько времени ты уже уделил этому? Можно пропустить и отметить потом.', 'How much time have you already spent on this? You can skip and log it later.') : T('Сколько времени ты на это потратил?', 'How much time did you spend on it?')}</p>
     <form id="sheet-form" novalidate>
       <div class="segmented small">
-        <button type="button" aria-selected="${ui.logDay === 0}" data-action="time-day" data-day="0">Сегодня</button>
-        <button type="button" aria-selected="${ui.logDay === 1}" data-action="time-day" data-day="1">Вчера</button>
+        <button type="button" aria-selected="${ui.logDay === 0}" data-action="time-day" data-day="0">${T('Сегодня', 'Today')}</button>
+        <button type="button" aria-selected="${ui.logDay === 1}" data-action="time-day" data-day="1">${T('Вчера', 'Yesterday')}</button>
       </div>
       <div class="time-grid">
         ${presets.map(m => `<button type="button" class="time-chip" data-action="pick-time" data-m="${m}">${formatMinutes(m)}</button>`).join('')}
       </div>
-      <label class="field"><span>Или своё число минут</span><input name="m" type="number" inputmode="numeric" min="1" max="900" placeholder="Например, 50"></label>
+      <label class="field"><span>${T('Или своё число минут', 'Or enter minutes')}</span><input name="m" type="number" inputmode="numeric" min="1" max="900" placeholder="${T('Например, 50', 'e.g. 50')}"></label>
       <p class="form-error" role="alert"></p>
       <div class="sheet-actions">
-        <button type="button" class="btn btn-ghost" data-action="close-sheet">${fresh ? 'Пропустить' : 'Отмена'}</button>
-        <button class="btn btn-primary" type="submit">Отметить</button>
+        <button type="button" class="btn btn-ghost" data-action="close-sheet">${fresh ? T('Пропустить', 'Skip') : T('Отмена', 'Cancel')}</button>
+        <button class="btn btn-primary" type="submit">${T('Отметить', 'Log')}</button>
       </div>
     </form>`, (fd) => {
     const m = Math.round(Number(fd.get('m')));
-    if (!m || m < 1 || m > 900) { $('#sheet .form-error').textContent = 'Выбери время или впиши число минут от 1 до 900'; return false; }
+    if (!m || m < 1 || m > 900) { $('#sheet .form-error').textContent = T('Выбери время или впиши число минут от 1 до 900', 'Pick a time or enter 1 to 900 minutes'); return false; }
     addEvent('time', subId, eventTime(), { m });
   });
 }
@@ -1204,7 +1235,7 @@ function subNotes(subId) {
     .filter(e => hasNote(e) && ((e.k === 'time' && e.ref === subId) || (e.k === 'act' && findAction(ui.save, e.ref)?.sub === subId)))
     .sort((a, b) => b.t - a.t).slice(0, 3);
   if (!list.length) return '';
-  return `<div class="sub-notes"><h3>Последние заметки</h3>${list.map(e => `
+  return `<div class="sub-notes"><h3>${T('Последние заметки', 'Recent notes')}</h3>${list.map(e => `
     <button class="sub-note" data-action="note" data-id="${e.id}">
       <small>${fmtDay(e.t)}${e.mood ? ' · ' + MOODS[e.mood - 1] : ''}</small>
       <span>${esc((e.note || '').slice(0, 160))}${(e.note || '').length > 160 ? '…' : ''}</span>
@@ -1218,26 +1249,26 @@ function openSubMenu(subId) {
   const stat = ui.state.subStats[subId];
   openSheet(`
     <h2>${sp.icon} ${esc(sb.name)}</h2>
-    <p>${stat.minutes ? `Всего ${formatMinutes(stat.minutes)}, ${stat.xp} опыта. ` : stat.xp ? `${stat.xp} опыта. ` : 'Пока ни одной отметки. '}За неделю — ${formatMinutes(stat.minutes7)}, за месяц — ${formatMinutes(stat.minutes30)}.</p>
+    <p>${stat.minutes ? T(`Всего ${formatMinutes(stat.minutes)}, ${stat.xp} опыта. `, `${formatMinutes(stat.minutes)} in total, ${stat.xp} XP. `) : stat.xp ? T(`${stat.xp} опыта. `, `${stat.xp} XP. `) : T('Пока ни одной отметки. ', 'No entries yet. ')}${T(`За неделю — ${formatMinutes(stat.minutes7)}, за месяц — ${formatMinutes(stat.minutes30)}.`, `This week: ${formatMinutes(stat.minutes7)}, this month: ${formatMinutes(stat.minutes30)}.`)}</p>
     ${subNotes(sb.id)}
     <form id="sheet-form" novalidate>
-      <label class="field"><span>Название</span><input name="name" maxlength="30" value="${esc(sb.name)}"></label>
+      <label class="field"><span>${T('Название', 'Name')}</span><input name="name" maxlength="30" value="${esc(sb.name)}"></label>
       <p class="form-error" role="alert"></p>
       <div class="sheet-actions stack">
-        <button type="button" class="btn btn-primary" data-action="log-time" data-id="${sb.id}">Отметить время</button>
-        <button class="btn btn-ghost" type="submit">Сохранить название</button>
-        <button type="button" class="btn btn-ghost" data-action="delete-sub" data-id="${sb.id}">Удалить подветвь</button>
-        <button type="button" class="btn btn-ghost" data-action="close-sheet">Закрыть</button>
+        <button type="button" class="btn btn-primary" data-action="log-time" data-id="${sb.id}">${T('Отметить время', 'Log time')}</button>
+        <button class="btn btn-ghost" type="submit">${T('Сохранить название', 'Save name')}</button>
+        <button type="button" class="btn btn-ghost" data-action="delete-sub" data-id="${sb.id}">${T('Удалить подветвь', 'Delete sub-branch')}</button>
+        <button type="button" class="btn btn-ghost" data-action="close-sheet">${T('Закрыть', 'Close')}</button>
       </div>
     </form>`, (fd) => {
     const name = String(fd.get('name') || '').trim().slice(0, 30);
-    if (!name) { $('#sheet .form-error').textContent = 'Название не может быть пустым'; return false; }
+    if (!name) { $('#sheet .form-error').textContent = T('Название не может быть пустым', 'The name can’t be empty'); return false; }
     if (subsOf(ui.save, sb.sphere).some(x => x.id !== sb.id && x.name.toLowerCase() === name.toLowerCase())) {
-      $('#sheet .form-error').textContent = 'Такая подветвь уже есть'; return false;
+      $('#sheet .form-error').textContent = T('Такая подветвь уже есть', 'That sub-branch already exists'); return false;
     }
     sb.name = name;
     commit();
-    toast('Название сохранено', 'info');
+    toast(T('Название сохранено', 'Name saved'), 'info');
   });
 }
 
@@ -1248,22 +1279,24 @@ function openSettings() {
       <button class="theme-card${ui.save.theme === th.id ? ' is-on' : ''}" data-action="theme" data-id="${th.id}"
         style="--s1:${th.tree.sky[0]};--s2:${th.tree.sky[1]};--g:${th.tree.ground};--t:${th.tree.trunk};--l1:${leaves[0]};--l2:${leaves[1]};--l3:${leaves[2]}">
         <span class="theme-preview ${th.tree.pixel ? 'is-pixel' : ''}"><i class="tp-trunk"></i><i class="tp-l1"></i><i class="tp-l2"></i><i class="tp-l3"></i></span>
-        <span>${th.name}</span>
+        <span>${nm(th)}</span>
       </button>`;
   }).join('');
   openSheet(`
-    <h2>Настройки</h2>
-    <h3>Стиль игры</h3>
+    <h2>${T('Настройки', 'Settings')}</h2>
+    <h3>${T('Язык', 'Language')}</h3>
+    ${langSwitch('lang-settings')}
+    <h3>${T('Стиль игры', 'Game style')}</h3>
     <div class="theme-grid">${themes}</div>
-    <h3>Профиль</h3>
-    <label class="field"><span>Имя</span><input id="set-name" maxlength="40" value="${esc(ui.save.name || ui.user.name)}"></label>
+    <h3>${T('Профиль', 'Profile')}</h3>
+    <label class="field"><span>${T('Имя', 'Name')}</span><input id="set-name" maxlength="40" value="${esc(ui.save.name || ui.user.name)}"></label>
     ${accountBlock()}
     <div class="sheet-actions stack">
-      <button class="btn btn-ghost" data-action="save-name">Сохранить имя</button>
-      <button class="btn btn-ghost" data-action="tour-again">Пройти обучение заново</button>
-      <button class="btn btn-ghost" data-action="reset">Начать заново</button>
-      <button class="btn btn-ghost" data-action="logout">Выйти из аккаунта</button>
-      <button class="btn btn-primary" data-action="close-sheet">Готово</button>
+      <button class="btn btn-ghost" data-action="save-name">${T('Сохранить имя', 'Save name')}</button>
+      <button class="btn btn-ghost" data-action="tour-again">${T('Пройти обучение заново', 'Replay the tutorial')}</button>
+      <button class="btn btn-ghost" data-action="reset">${T('Начать заново', 'Start over')}</button>
+      <button class="btn btn-ghost" data-action="logout">${T('Выйти из аккаунта', 'Log out')}</button>
+      <button class="btn btn-primary" data-action="close-sheet">${T('Готово', 'Done')}</button>
     </div>`);
 }
 
@@ -1272,26 +1305,26 @@ function accountBlock() {
   const u = ui.user;
   const mail = u.email
     ? `<span class="tr-done">✓</span>`
-    : `<button class="btn btn-small btn-primary" data-action="attach-email">Добавить</button>`;
+    : `<button class="btn btn-small btn-primary" data-action="attach-email">${T('Добавить', 'Add')}</button>`;
   const tgBtn = u.telegram
-    ? (u.email ? `<button class="btn btn-small btn-ghost" data-action="unlink-tg">Отвязать</button>` : `<span class="tr-done">✓</span>`)
-    : `<button class="btn btn-small btn-primary" data-action="link-tg">Привязать</button>`;
+    ? (u.email ? `<button class="btn btn-small btn-ghost" data-action="unlink-tg">${T('Отвязать', 'Unlink')}</button>` : `<span class="tr-done">✓</span>`)
+    : `<button class="btn btn-small btn-primary" data-action="link-tg">${T('Привязать', 'Link')}</button>`;
   return `
-    <h3>Аккаунт</h3>
+    <h3>${T('Аккаунт', 'Account')}</h3>
     <div class="link-list">
       <div class="link-row">
         <span class="link-ic">✉️</span>
-        <span class="link-body"><strong>Вход по почте</strong><small>${u.email ? esc(u.email) : 'Не добавлен: без него не войти на сайте'}</small></span>
+        <span class="link-body"><strong>${T('Вход по почте', 'Email login')}</strong><small>${u.email ? esc(u.email) : T('Не добавлен: без него не войти на сайте', 'Not added: you need it to log in on the website')}</small></span>
         ${mail}
       </div>
       <div class="link-row">
         <span class="link-ic">✈️</span>
-        <span class="link-body"><strong>Telegram</strong><small>${u.telegram ? 'Привязан: на сайте и в Telegram одно дерево' : 'Не привязан'}</small></span>
+        <span class="link-body"><strong>Telegram</strong><small>${u.telegram ? T('Привязан: на сайте и в Telegram одно дерево', 'Linked: one tree on the website and in Telegram') : T('Не привязан', 'Not linked')}</small></span>
         ${tgBtn}
       </div>
     </div>
-    ${TG.wa && !u.email ? `<button class="btn btn-ghost btn-wide" data-action="merge-login">Уже играю на сайте — объединить</button>` : ''}
-    <p class="small muted">Связанные вход по почте и Telegram — это один аккаунт: отметил дело на телефоне — увидишь его на компьютере. При объединении прогресс складывается, ничего не теряется.</p>`;
+    ${TG.wa && !u.email ? `<button class="btn btn-ghost btn-wide" data-action="merge-login">${T('Уже играю на сайте — объединить', 'I already play on the website — merge')}</button>` : ''}
+    <p class="small muted">${T('Связанные вход по почте и Telegram — это один аккаунт: отметил дело на телефоне — увидишь его на компьютере. При объединении прогресс складывается, ничего не теряется.', 'Linked email login and Telegram are one account: log on your phone, see it on your computer. Merging adds the progress together — nothing is lost.')}</p>`;
 }
 
 function credentialsForm(title, text, submitLabel, extra = '') {
@@ -1299,12 +1332,12 @@ function credentialsForm(title, text, submitLabel, extra = '') {
     <h2>${title}</h2>
     <p>${text}</p>
     <form id="sheet-form" novalidate>
-      <label class="field"><span>Почта</span><input name="email" type="email" autocomplete="email" required placeholder="you@mail.ru"></label>
-      <label class="field"><span>Пароль</span><input name="password" type="password" autocomplete="current-password" required minlength="6" placeholder="Не короче 6 символов"></label>
+      <label class="field"><span>${T('Почта', 'Email')}</span><input name="email" type="email" autocomplete="email" required placeholder="${T('you@mail.ru', 'you@example.com')}"></label>
+      <label class="field"><span>${T('Пароль', 'Password')}</span><input name="password" type="password" autocomplete="current-password" required minlength="6" placeholder="${T('Не короче 6 символов', 'At least 6 characters')}"></label>
       <p class="form-error" role="alert"></p>
       ${extra}
       <div class="sheet-actions">
-        <button type="button" class="btn btn-ghost" data-action="close-sheet">Отмена</button>
+        <button type="button" class="btn btn-ghost" data-action="close-sheet">${T('Отмена', 'Cancel')}</button>
         <button class="btn btn-primary" type="submit">${submitLabel}</button>
       </div>
     </form>`;
@@ -1321,13 +1354,13 @@ async function mergeLogin(email, password) {
   }
   closeSheet();
   await loadGame();
-  toast('Аккаунты объединены: теперь здесь и на сайте одно дерево', 'good');
+  toast(T('Аккаунты объединены: теперь здесь и на сайте одно дерево', 'Accounts merged: now it’s one tree here and on the website'), 'good');
 }
 
 function openMergeLogin() {
-  openSheet(credentialsForm('Объединить с аккаунтом сайта',
-    'Введи почту и пароль, с которыми играешь на сайте. Прогресс из Telegram сложится с прогрессом на сайте.',
-    'Объединить'), async (fd) => {
+  openSheet(credentialsForm(T('Объединить с аккаунтом сайта', 'Merge with your website account'),
+    T('Введи почту и пароль, с которыми играешь на сайте. Прогресс из Telegram сложится с прогрессом на сайте.', 'Enter the email and password you use on the website. Your Telegram progress will be added to it.'),
+    T('Объединить', 'Merge')), async (fd) => {
     const err = $('#sheet .form-error');
     try {
       await mergeLogin(String(fd.get('email') || '').trim(), String(fd.get('password') || ''));
@@ -1337,9 +1370,9 @@ function openMergeLogin() {
 }
 
 function openAttachEmail() {
-  openSheet(credentialsForm('Вход по почте',
-    'Добавь почту и пароль, чтобы заходить в этот же аккаунт с сайта на компьютере.',
-    'Добавить'), async (fd) => {
+  openSheet(credentialsForm(T('Вход по почте', 'Email login'),
+    T('Добавь почту и пароль, чтобы заходить в этот же аккаунт с сайта на компьютере.', 'Add an email and password to open this same account on the website.'),
+    T('Добавить', 'Add')), async (fd) => {
     const email = String(fd.get('email') || '').trim();
     const password = String(fd.get('password') || '');
     const err = $('#sheet .form-error');
@@ -1347,11 +1380,11 @@ function openAttachEmail() {
       const res = await api.attachEmail(email, password);
       ui.user = res.user;
       closeSheet();
-      toast('Готово: теперь можно входить на сайте по почте', 'good');
+      toast(T('Готово: теперь можно входить на сайте по почте', 'Done: you can now log in on the website with your email'), 'good');
     } catch (e) {
       err.textContent = e.message;
       if (e.code === 'email_taken' && TG.wa) {
-        err.insertAdjacentHTML('afterend', `<button type="button" class="btn btn-primary btn-wide" data-action="merge-now">Объединить с этим аккаунтом</button>`);
+        err.insertAdjacentHTML('afterend', `<button type="button" class="btn btn-primary btn-wide" data-action="merge-now">${T('Объединить с этим аккаунтом', 'Merge with this account')}</button>`);
         $('#sheet')._merge = { email, password };
       }
     }
@@ -1363,12 +1396,12 @@ async function startLinkTelegram() {
   let res;
   try { res = await api.linkCode(); } catch (e) { toast(e.message, 'bad'); return; }
   openSheet(`
-    <h2>Привязать Telegram</h2>
-    <p>Открой бота @${esc(res.bot)} и нажми «Start». Бот привяжет твой Telegram к этому аккаунту. Ссылка действует 30 минут.</p>
-    <p>Если ты уже играл в Telegram, прогресс оттуда сложится с этим.</p>
+    <h2>${T('Привязать Telegram', 'Link Telegram')}</h2>
+    <p>${T(`Открой бота @${esc(res.bot)} и нажми «Start». Бот привяжет твой Telegram к этому аккаунту. Ссылка действует 30 минут.`, `Open the bot @${esc(res.bot)} and press “Start”. The bot will link your Telegram to this account. The link works for 30 minutes.`)}</p>
+    <p>${T('Если ты уже играл в Telegram, прогресс оттуда сложится с этим.', 'If you’ve already played in Telegram, that progress will be added to this one.')}</p>
     <div class="sheet-actions stack">
-      <a class="btn btn-primary" href="${esc(res.url)}" target="_blank" rel="noopener">Открыть бота</a>
-      <button class="btn btn-ghost" data-action="check-link">Я нажал Start</button>
+      <a class="btn btn-primary" href="${esc(res.url)}" target="_blank" rel="noopener">${T('Открыть бота', 'Open the bot')}</a>
+      <button class="btn btn-ghost" data-action="check-link">${T('Я нажал Start', 'I pressed Start')}</button>
     </div>`);
 }
 
@@ -1386,43 +1419,43 @@ function openAddTracker() {
   const groups = SPHERES.map(sp => {
     const acts = allActions(ui.save).filter(a => a.sphere === sp.id && !ui.save.tracked.includes(a.id));
     if (!acts.length) return '';
-    return `<h3>${sp.icon} ${sp.name}</h3><div class="act-list compact">${acts.map(a =>
-      `<button class="act" data-action="track" data-id="${a.id}" style="--c:${sp.color}"><span class="act-name">${esc(a.name)}</span>${flameChip(ui.state, a.id)}</button>`).join('')}</div>`;
+    return `<h3>${sp.icon} ${nm(sp)}</h3><div class="act-list compact">${acts.map(a =>
+      `<button class="act" data-action="track" data-id="${a.id}" style="--c:${sp.color}"><span class="act-name">${esc(nm(a))}</span>${flameChip(ui.state, a.id)}</button>`).join('')}</div>`;
   }).join('');
   openSheet(`
-    <h2>За каким делом следить?</h2>
-    <p>Огонёк будет всегда на виду, даже когда погаснет. Своё дело можно сначала добавить во вкладке «Отметить».</p>
+    <h2>${T('За каким делом следить?', 'Which activity to track?')}</h2>
+    <p>${T('Огонёк будет всегда на виду, даже когда погаснет. Своё дело можно сначала добавить во вкладке «Отметить».', 'Its streak will always be visible, even when it goes out. You can add your own activity first in the “Log” tab.')}</p>
     ${groups}
-    <div class="sheet-actions"><button class="btn btn-ghost" data-action="close-sheet">Отмена</button></div>`);
+    <div class="sheet-actions"><button class="btn btn-ghost" data-action="close-sheet">${T('Отмена', 'Cancel')}</button></div>`);
 }
 
 function openCustomAct(presetSphere) {
   const pre = presetSphere || (ui.filter !== 'all' ? ui.filter : null);
   const subGroups = SPHERES.map(sp => {
     const list = subsOf(ui.save, sp.id);
-    return list.length ? `<optgroup label="${sp.icon} ${sp.name}">${list.map(sb => `<option value="${sb.id}">${esc(sb.name)}</option>`).join('')}</optgroup>` : '';
+    return list.length ? `<optgroup label="${sp.icon} ${nm(sp)}">${list.map(sb => `<option value="${sb.id}">${esc(sb.name)}</option>`).join('')}</optgroup>` : '';
   }).join('');
   openSheet(`
-    <h2>Своё полезное дело</h2>
+    <h2>${T('Своё полезное дело', 'Your own activity')}</h2>
     <form id="sheet-form">
-      <label class="field"><span>Что ты делаешь</span><input name="name" required maxlength="60" placeholder="Например: решал задачи по матану"></label>
-      <label class="field"><span>Какую ветвь растит</span>
-        <select name="sphere">${SPHERES.map(s => `<option value="${s.id}"${pre === s.id ? ' selected' : ''}>${s.icon} ${s.name}</option>`).join('')}</select>
+      <label class="field"><span>${T('Что ты делаешь', 'What do you do')}</span><input name="name" required maxlength="60" placeholder="${T('Например: решал задачи по матану', 'e.g. solved calculus problems')}"></label>
+      <label class="field"><span>${T('Какую ветвь растит', 'Which branch it grows')}</span>
+        <select name="sphere">${SPHERES.map(s => `<option value="${s.id}"${pre === s.id ? ' selected' : ''}>${s.icon} ${nm(s)}</option>`).join('')}</select>
       </label>
-      ${subGroups ? `<label class="field"><span>Подветвь (необязательно)</span>
-        <select name="sub"><option value="">Без подветви</option>${subGroups}</select>
+      ${subGroups ? `<label class="field"><span>${T('Подветвь (необязательно)', 'Sub-branch (optional)')}</span>
+        <select name="sub"><option value="">${T('Без подветви', 'No sub-branch')}</option>${subGroups}</select>
       </label>` : ''}
-      <label class="field"><span>Насколько это трудно</span>
+      <label class="field"><span>${T('Насколько это трудно', 'How hard is it')}</span>
         <select name="xp">
-          <option value="6">Легко, пара минут — 6 опыта</option>
-          <option value="12" selected>Обычно, полчаса — 12 опыта</option>
-          <option value="20">Серьёзно, час и больше — 20 опыта</option>
-          <option value="30">Подвиг — 30 опыта</option>
+          <option value="6">${T('Легко, пара минут — 6 опыта', 'Easy, a few minutes — 6 XP')}</option>
+          <option value="12" selected>${T('Обычно, полчаса — 12 опыта', 'Normal, half an hour — 12 XP')}</option>
+          <option value="20">${T('Серьёзно, час и больше — 20 опыта', 'Serious, an hour or more — 20 XP')}</option>
+          <option value="30">${T('Подвиг — 30 опыта', 'Heroic — 30 XP')}</option>
         </select>
       </label>
       <div class="sheet-actions">
-        <button type="button" class="btn btn-ghost" data-action="close-sheet">Отмена</button>
-        <button class="btn btn-primary" type="submit">Добавить</button>
+        <button type="button" class="btn btn-ghost" data-action="close-sheet">${T('Отмена', 'Cancel')}</button>
+        <button class="btn btn-primary" type="submit">${T('Добавить', 'Add')}</button>
       </div>
     </form>`, (fd) => {
     const name = String(fd.get('name') || '').trim();
@@ -1432,41 +1465,41 @@ function openCustomAct(presetSphere) {
       id: 'ca_' + uid(), name, sphere: sub ? sub.sphere : fd.get('sphere'), xp: Number(fd.get('xp')) || 12,
       ...(sub ? { sub: sub.id } : {}),
     });
-    toast('Дело добавлено в список', 'info');
+    toast(T('Дело добавлено в список', 'Activity added to the list'), 'info');
     commit();
   });
 }
 
 function openCustomBad() {
   openSheet(`
-    <h2>Своя вредная привычка</h2>
+    <h2>${T('Своя вредная привычка', 'Your own bad habit')}</h2>
     <form id="sheet-form">
-      <label class="field"><span>Что мешает</span><input name="name" required maxlength="60" placeholder="Например: ночные сериалы"></label>
-      <fieldset class="field"><legend>Какие ветви страдают</legend>
-        <div class="check-grid">${SPHERES.map(s => `<label class="check"><input type="checkbox" name="sp" value="${s.id}"> ${s.icon} ${s.name}</label>`).join('')}</div>
+      <label class="field"><span>${T('Что мешает', 'What holds you back')}</span><input name="name" required maxlength="60" placeholder="${T('Например: ночные сериалы', 'e.g. late-night TV shows')}"></label>
+      <fieldset class="field"><legend>${T('Какие ветви страдают', 'Which branches suffer')}</legend>
+        <div class="check-grid">${SPHERES.map(s => `<label class="check"><input type="checkbox" name="sp" value="${s.id}"> ${s.icon} ${nm(s)}</label>`).join('')}</div>
       </fieldset>
-      <label class="field"><span>Насколько вредит</span>
+      <label class="field"><span>${T('Насколько вредит', 'How harmful')}</span>
         <select name="dmg">
-          <option value="5">Немного — −5 силы</option>
-          <option value="10" selected>Заметно — −10 силы</option>
-          <option value="15">Сильно — −15 силы</option>
+          <option value="5">${T('Немного — −5 силы', 'A little — −5 vitality')}</option>
+          <option value="10" selected>${T('Заметно — −10 силы', 'Noticeably — −10 vitality')}</option>
+          <option value="15">${T('Сильно — −15 силы', 'A lot — −15 vitality')}</option>
         </select>
       </label>
       <p class="form-error" role="alert"></p>
       <div class="sheet-actions">
-        <button type="button" class="btn btn-ghost" data-action="close-sheet">Отмена</button>
-        <button class="btn btn-primary" type="submit">Добавить</button>
+        <button type="button" class="btn btn-ghost" data-action="close-sheet">${T('Отмена', 'Cancel')}</button>
+        <button class="btn btn-primary" type="submit">${T('Добавить', 'Add')}</button>
       </div>
     </form>`, (fd) => {
     const name = String(fd.get('name') || '').trim();
     const spheres = fd.getAll('sp');
     if (!name || !spheres.length) {
-      $('#sheet .form-error').textContent = 'Напиши название и выбери хотя бы одну ветвь';
+      $('#sheet .form-error').textContent = T('Напиши название и выбери хотя бы одну ветвь', 'Enter a name and pick at least one branch');
       return false;
     }
     const dmg = Number(fd.get('dmg')) || 10;
     ui.save.custom.bads.push({ id: 'cb_' + uid(), name, damage: Object.fromEntries(spheres.map(s => [s, dmg])) });
-    toast('Привычка добавлена', 'info');
+    toast(T('Привычка добавлена', 'Habit added'), 'info');
     commit();
   });
 }
@@ -1565,6 +1598,17 @@ function onClick(e) {
   switch (a) {
     case 'retry': return loadGame();
     case 'auth-mode': ui.authMode = el.dataset.mode; return renderAuth();
+    case 'set-lang': {
+      if (el.dataset.lang === getLang()) return;
+      setLang(el.dataset.lang);
+      applyStaticTexts();
+      if (!ui.save) return renderAuth();
+      ui.save.lang = getLang();
+      const inSettings = !$('#sheet').hidden;
+      commit();
+      if (inSettings) openSettings();
+      return;
+    }
     case 'tab':
       ui.tab = el.dataset.tab;
       render();
@@ -1580,7 +1624,7 @@ function onClick(e) {
     case 'note': return openNote(id);
     case 'note-delete': {
       const e2 = ui.save.events.find(x => x.id === id);
-      if (e2) { delete e2.note; delete e2.mood; e2.ne = Date.now(); commit(); toast('Заметка удалена', 'info'); }
+      if (e2) { delete e2.note; delete e2.mood; e2.ne = Date.now(); commit(); toast(T('Заметка удалена', 'Note deleted'), 'info'); }
       return closeSheet();
     }
     case 'branch-notes':
@@ -1609,8 +1653,8 @@ function onClick(e) {
     }
     case 'delete-sub': {
       const sb = findSub(ui.save, id);
-      return confirmSheet('Удалить подветвь?', `«${esc(sb.name)}» исчезнет с дерева. Опыт останется в ветви «${SPHERE_BY_ID[sb.sphere].name}», отметки — в истории.`,
-        'Удалить', () => { sb.archived = true; commit(); toast('Подветвь удалена', 'info'); }, true);
+      return confirmSheet(T('Удалить подветвь?', 'Delete sub-branch?'), T(`«${esc(sb.name)}» исчезнет с дерева. Опыт останется в ветви «${nm(SPHERE_BY_ID[sb.sphere])}», отметки — в истории.`, `“${esc(sb.name)}” will disappear from the tree. Its XP stays in the ${nm(SPHERE_BY_ID[sb.sphere])} branch, entries stay in history.`),
+        T('Удалить', 'Delete'), () => { sb.archived = true; commit(); toast(T('Подветвь удалена', 'Sub-branch deleted'), 'info'); }, true);
     }
     case 'filter': ui.filter = el.dataset.sphere; return render();
     case 'skill-sphere': ui.skillSphere = el.dataset.sphere; return render();
@@ -1621,8 +1665,8 @@ function onClick(e) {
       return;
     case 'log-bad': {
       const b = findBad(ui.save, id);
-      return confirmSheet('Отметить срыв?', `«${esc(b.name)}». Листья на затронутых ветвях пожелтеют. Это нормально — главное видеть, что происходит, и не сдаваться.`,
-        'Отметить честно', () => addEvent('bad', id));
+      return confirmSheet(T('Отметить срыв?', 'Log a slip?'), T(`«${esc(nm(b))}». Листья на затронутых ветвях пожелтеют. Это нормально — главное видеть, что происходит, и не сдаваться.`, `“${esc(nm(b))}”. Leaves on the affected branches will turn yellow. That’s okay — what matters is seeing what’s going on and not giving up.`),
+        T('Отметить честно', 'Log it honestly'), () => addEvent('bad', id));
     }
     case 'custom-act': return openCustomAct(el.dataset.sphere);
     case 'add-tracker': return openAddTracker();
@@ -1638,18 +1682,18 @@ function onClick(e) {
       refreshUser().then((u) => {
         closeSheet();
         render();
-        toast(u.telegram ? 'Telegram привязан: теперь одно дерево на сайте и в Telegram' : 'Пока не привязан. Открой бота и нажми Start', u.telegram ? 'good' : 'info');
+        toast(u.telegram ? T('Telegram привязан: теперь одно дерево на сайте и в Telegram', 'Telegram linked: now it’s one tree on the website and in Telegram') : T('Пока не привязан. Открой бота и нажми Start', 'Not linked yet. Open the bot and press Start'), u.telegram ? 'good' : 'info');
         if (u.telegram) openSettings();
       }).catch(err => toast(err.message, 'bad'));
       return;
     case 'unlink-tg':
-      return confirmSheet('Отвязать Telegram?', 'Прогресс останется в этом аккаунте. Открыв бота снова, ты начнёшь новое дерево, пока не привяжешь Telegram обратно.',
-        'Отвязать', async () => {
-          try { ui.user = (await api.unlinkTelegram()).user; toast('Telegram отвязан', 'info'); } catch (e) { toast(e.message, 'bad'); }
+      return confirmSheet(T('Отвязать Telegram?', 'Unlink Telegram?'), T('Прогресс останется в этом аккаунте. Открыв бота снова, ты начнёшь новое дерево, пока не привяжешь Telegram обратно.', 'Your progress stays in this account. If you open the bot again, you’ll start a new tree until you link Telegram back.'),
+        T('Отвязать', 'Unlink'), async () => {
+          try { ui.user = (await api.unlinkTelegram()).user; toast(T('Telegram отвязан', 'Telegram unlinked'), 'info'); } catch (e) { toast(e.message, 'bad'); }
         }, true);
     case 'track':
       if (!ui.save.tracked.includes(id)) ui.save.tracked.push(id);
-      closeSheet(); commit(); toast('Огонёк добавлен', 'info');
+      closeSheet(); commit(); toast(T('Огонёк добавлен', 'Streak added'), 'info');
       return;
     case 'untrack':
       ui.save.tracked = ui.save.tracked.filter(x => x !== id);
@@ -1658,24 +1702,25 @@ function onClick(e) {
     case 'custom-bad': return openCustomBad();
     case 'unlock-skill': {
       const sk = SKILL_BY_ID[id];
-      return confirmSheet('Навык освоен?', `«${esc(sk.name)}». Отмечай, только если это правда получилось. Если поторопился — навык можно откатить.`,
-        'Да, освоил', () => addEvent('skill', id, Date.now()));
+      return confirmSheet(T('Навык освоен?', 'Skill mastered?'), T(`«${esc(nm(sk))}». Отмечай, только если это правда получилось. Если поторопился — навык можно откатить.`, `“${esc(nm(sk))}”. Only mark it if you really did it. If you were too quick, you can undo it.`),
+        T('Да, освоил', 'Yes, I did it'), () => addEvent('skill', id, Date.now()));
     }
     case 'undo-skill': {
       const deps = dependentSkills(ui.state, id);
       const ev = [...ui.save.events].reverse().find(e2 => e2.k === 'skill' && e2.ref === id && ui.state.effects[e2.id]?.valid);
-      const depText = deps.length ? `<br><br>Вместе с ним закроются зависимые навыки: ${deps.map(d => '«' + esc(SKILL_BY_ID[d].name) + '»').join(', ')}.` : '';
-      return confirmSheet('Откатить навык?', `«${esc(SKILL_BY_ID[id].name)}» снова станет неосвоенным, а бонус опыта уйдёт.${depText}`,
-        'Откатить', () => { if (ev) removeEvent(ev.id); }, true);
+      const depList = deps.map(d => esc(nm(SKILL_BY_ID[d]))).join(', ');
+      const depText = deps.length ? '<br><br>' + T(`Вместе с ним закроются зависимые навыки: ${depList}.`, `Dependent skills will be locked too: ${depList}.`) : '';
+      return confirmSheet(T('Откатить навык?', 'Undo this skill?'), T(`«${esc(nm(SKILL_BY_ID[id]))}» снова станет неосвоенным, а бонус опыта уйдёт.`, `“${esc(nm(SKILL_BY_ID[id]))}” will be un-mastered and its XP bonus removed.`) + depText,
+        T('Откатить', 'Undo'), () => { if (ev) removeEvent(ev.id); }, true);
     }
     case 'learn': return addEvent('mat', id, Date.now());
     case 'undo-mat': {
       const ev = ui.save.events.find(e2 => e2.k === 'mat' && e2.ref === id);
-      return confirmSheet('Отменить отметку?', 'Материал снова станет неизученным, опыт за него уйдёт.', 'Отменить отметку', () => { if (ev) removeEvent(ev.id); }, true);
+      return confirmSheet(T('Отменить отметку?', 'Undo this entry?'), T('Материал снова станет неизученным, опыт за него уйдёт.', 'The resource will be marked as not done and its XP removed.'), T('Отменить отметку', 'Undo entry'), () => { if (ev) removeEvent(ev.id); }, true);
     }
     case 'undo': {
-      return confirmSheet('Отменить отметку?', 'Дерево пересчитается так, будто этого не было. Навыки, которые держались на этом опыте, могут закрыться.',
-        'Отменить', () => removeEvent(id), true);
+      return confirmSheet(T('Отменить отметку?', 'Undo this entry?'), T('Дерево пересчитается так, будто этого не было. Навыки, которые держались на этом опыте, могут закрыться.', 'The tree will be recalculated as if it never happened. Skills that relied on this XP may get locked.'),
+        T('Отменить', 'Undo'), () => removeEvent(id), true);
     }
     case 'goto-skills':
       ui.skillSphere = el.dataset.sphere; ui.tab = 'skills'; closeSheet(); render();
@@ -1687,12 +1732,17 @@ function onClick(e) {
       return openSettings();
     case 'save-name': {
       const v = $('#set-name').value.trim().slice(0, 40);
-      ui.save.name = v; commit(); toast('Имя сохранено', 'info');
+      ui.save.name = v; commit(); toast(T('Имя сохранено', 'Name saved'), 'info');
       return;
     }
     case 'reset':
-      return confirmSheet('Начать заново?', 'Весь прогресс, история и свои привычки будут удалены. Стиль оформления останется. Это нельзя отменить.',
-        'Удалить прогресс', () => { const theme = ui.save.theme; ui.save = newSave(ui.save.name); ui.save.theme = theme; ui.save.resetAt = Date.now(); ui.selected = null; commit(); }, true);
+      return confirmSheet(T('Начать заново?', 'Start over?'), T('Весь прогресс, история и свои привычки будут удалены. Стиль оформления останется. Это нельзя отменить.', 'All progress, history and your own habits will be deleted. Your style stays. This can’t be undone.'),
+        T('Удалить прогресс', 'Delete progress'), () => {
+          const { theme, lang, seenTips } = ui.save;
+          ui.save = newSave(ui.save.name);
+          Object.assign(ui.save, { theme, lang, seenTips, resetAt: Date.now() });
+          ui.selected = null; commit();
+        }, true);
     case 'logout':
       auth.token = null;
       ui.user = null; ui.save = null; ui.selected = null;

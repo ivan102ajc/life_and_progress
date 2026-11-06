@@ -87,6 +87,10 @@ p { margin: 0; }
   border-radius: var(--radius); padding: 24px 20px; border: 1px solid var(--line);
 }
 .logo { font-size: 28px; color: var(--accent); }
+.auth-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.lang-switch { margin: 0; flex: 0 0 auto; }
+.lang-switch button { padding: 5px 12px; font-size: 13px; }
+.sheet-card .lang-switch { justify-self: start; }
 .auth-lead { margin: 8px 0 20px; color: var(--muted); }
 @media (min-width: 900px) {
   .auth { grid-template-columns: minmax(0, 560px) 420px; align-content: center; gap: 48px; justify-content: center; }

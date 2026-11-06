@@ -30,14 +30,28 @@ async function tg(method, payload) {
   return res.json();
 }
 
-const WELCOME = (name) =>
-  `Привет${name ? ', ' + name : ''}! 🌱\n\n` +
-  'Это «Древо жизни» — игра, в которой твои реальные дела растят дерево.\n\n' +
-  '• Полезное дело — ветка растёт и покрывается листьями\n' +
-  '• Новый навык — веточка с плодом\n' +
-  '• Вредная привычка — листья желтеют\n' +
-  '• Делаешь что-то каждый день — горит огонёк 🔥\n\n' +
-  'Нажми кнопку ниже, чтобы открыть своё дерево.';
+// Бот отвечает на языке, выставленном у пользователя в Telegram.
+const isRu = (from) => /^(ru|uk|be|kk)/i.test(from?.language_code || '');
+const L = (from, ru, en) => (isRu(from) ? ru : en);
+
+const WELCOME = (from) => {
+  const name = from?.first_name;
+  return L(from,
+    `Привет${name ? ', ' + name : ''}! 🌱\n\n` +
+    'Это «Древо жизни» — игра, в которой твои реальные дела растят дерево.\n\n' +
+    '• Полезное дело — ветка растёт и покрывается листьями\n' +
+    '• Новый навык — веточка с плодом\n' +
+    '• Вредная привычка — листья желтеют\n' +
+    '• Делаешь что-то каждый день — горит огонёк 🔥\n\n' +
+    'Нажми кнопку ниже, чтобы открыть своё дерево.',
+    `Hi${name ? ', ' + name : ''}! 🌱\n\n` +
+    'This is Tree of Life — a game where your real-life activities grow a tree.\n\n' +
+    '• A useful activity — a branch grows and fills with leaves\n' +
+    '• A new skill — a twig with fruit\n' +
+    '• A bad habit — leaves turn yellow\n' +
+    '• Do something every day — a streak lights up 🔥\n\n' +
+    'Tap the button below to open your tree.');
+};
 
 export default handle(async (req, res) => {
   if (!TOKEN) return send(res, 501, { error: 'Не задана переменная TELEGRAM_BOT_TOKEN' });
@@ -53,15 +67,27 @@ export default handle(async (req, res) => {
         allowed_updates: ['message'],
       }),
       menuButton: await tg('setChatMenuButton', {
-        menu_button: { type: 'web_app', text: 'Открыть', web_app: { url } },
+        menu_button: { type: 'web_app', text: '🌳 Play', web_app: { url } },
       }),
+      // Команды и описание: английские — по умолчанию, русские — для русского Telegram.
       commands: await tg('setMyCommands', {
+        commands: [
+          { command: 'start', description: 'Open Tree of Life' },
+          { command: 'help', description: 'How to play' },
+        ],
+      }),
+      commandsRu: await tg('setMyCommands', {
+        language_code: 'ru',
         commands: [
           { command: 'start', description: 'Открыть Древо жизни' },
           { command: 'help', description: 'Как играть' },
         ],
       }),
       description: await tg('setMyShortDescription', {
+        short_description: 'A self-improvement game: real activities grow your tree 🌳',
+      }),
+      descriptionRu: await tg('setMyShortDescription', {
+        language_code: 'ru',
         short_description: 'Игра для саморазвития: реальные дела растят твоё дерево 🌳',
       }),
     };
@@ -78,7 +104,8 @@ export default handle(async (req, res) => {
   const msg = update.message;
   if (msg?.chat?.id && typeof msg.text === 'string') {
     const text = msg.text.trim();
-    const button = { reply_markup: { inline_keyboard: [[{ text: '🌳 Открыть моё дерево', web_app: { url } }]] } };
+    const from = msg.from;
+    const button = { reply_markup: { inline_keyboard: [[{ text: L(from, '🌳 Открыть моё дерево', '🌳 Open my tree'), web_app: { url } }]] } };
     const payload = text.startsWith('/start ') ? text.slice(7).trim() : '';
     if (payload.startsWith('L') && msg.from?.id) {
       // Привязка Telegram к аккаунту с сайта по ссылке из настроек игры.
@@ -87,24 +114,28 @@ export default handle(async (req, res) => {
       const user = userId ? await db.getUserById(userId) : null;
       let reply;
       if (!user) {
-        reply = 'Ссылка для привязки устарела. Открой настройки игры на сайте и нажми «Привязать Telegram» ещё раз.';
+        reply = L(from, 'Ссылка для привязки устарела. Открой настройки игры на сайте и нажми «Привязать Telegram» ещё раз.', 'This link has expired. Open the game settings on the website and press “Link Telegram” again.');
       } else {
         const r = await linkTelegram(db, user, String(msg.from.id));
         if (r.status === 'taken') {
-          reply = `Этот Telegram уже привязан к другому аккаунту (${maskEmail(r.other.email)}). Сначала отвяжи его там в настройках игры.`;
+          reply = L(from, `Этот Telegram уже привязан к другому аккаунту (${maskEmail(r.other.email)}). Сначала отвяжи его там в настройках игры.`, `This Telegram is already linked to another account (${maskEmail(r.other.email)}). Unlink it there in the game settings first.`);
         } else {
-          reply = `✅ Готово! Telegram привязан к аккаунту «${r.user.name}»` +
+          reply = L(from,
+            `✅ Готово! Telegram привязан к аккаунту «${r.user.name}»` +
             (r.status === 'merged' ? '. Прогресс из Telegram перенесён и сложен с прогрессом с сайта.' : '.') +
-            '\n\nТеперь на сайте и в Telegram одно и то же дерево.';
+            '\n\nТеперь на сайте и в Telegram одно и то же дерево.',
+            `✅ Done! Telegram is linked to the account “${r.user.name}”` +
+            (r.status === 'merged' ? '. Your Telegram progress was moved and added to your website progress.' : '.') +
+            '\n\nNow it’s the same tree on the website and in Telegram.');
         }
       }
       await tg('sendMessage', { chat_id: msg.chat.id, text: reply, ...button });
     } else if (text.startsWith('/start') || text.startsWith('/help')) {
-      await tg('sendMessage', { chat_id: msg.chat.id, text: WELCOME(msg.from?.first_name), ...button });
+      await tg('sendMessage', { chat_id: msg.chat.id, text: WELCOME(from), ...button });
     } else {
       await tg('sendMessage', {
         chat_id: msg.chat.id,
-        text: 'Отмечать дела и смотреть на дерево можно в приложении 👇',
+        text: L(from, 'Отмечать дела и смотреть на дерево можно в приложении 👇', 'Log activities and see your tree in the app 👇'),
         ...button,
       });
     }

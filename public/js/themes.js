@@ -5,7 +5,7 @@
 export const THEMES = [
   {
     id: 'spring',
-    name: 'Весенний сад',
+    name: 'Весенний сад', en: 'Spring garden',
     ui: {
       bg: '#E9F0E6', surface: '#F7FAF4', surface2: '#DDE7D8', ink: '#1C2B22', muted: '#5D6F62',
       line: '#C9D7C3', accent: '#2F7A47', accentInk: '#FFFFFF', good: '#2F7A47', bad: '#B4532F',
@@ -23,7 +23,7 @@ export const THEMES = [
   },
   {
     id: 'sakura',
-    name: 'Сакура',
+    name: 'Сакура', en: 'Sakura',
     ui: {
       bg: '#F6E9EC', surface: '#FFF8F8', surface2: '#F1DADF', ink: '#2E1F25', muted: '#7A5C66',
       line: '#E6C6CF', accent: '#B8456F', accentInk: '#FFFFFF', good: '#3E8A62', bad: '#B8456F',
@@ -41,7 +41,7 @@ export const THEMES = [
   },
   {
     id: 'autumn',
-    name: 'Золотая осень',
+    name: 'Золотая осень', en: 'Golden autumn',
     ui: {
       bg: '#F2E6D5', surface: '#FBF5EC', surface2: '#EAD9C2', ink: '#2F2116', muted: '#7A6450',
       line: '#DFC9AC', accent: '#A8481F', accentInk: '#FFFFFF', good: '#5E7F2F', bad: '#A8481F',
@@ -59,7 +59,7 @@ export const THEMES = [
   },
   {
     id: 'neon',
-    name: 'Ночной неон',
+    name: 'Ночной неон', en: 'Night neon',
     ui: {
       bg: '#0D1322', surface: '#151D31', surface2: '#1E2942', ink: '#E8EEFF', muted: '#8E9BBE',
       line: '#2A3756', accent: '#5CF2C4', accentInk: '#06261D', good: '#5CF2C4', bad: '#FF6B8B',
@@ -77,7 +77,7 @@ export const THEMES = [
   },
   {
     id: 'pixel',
-    name: 'Пиксель',
+    name: 'Пиксель', en: 'Pixel',
     ui: {
       bg: '#CFE8EF', surface: '#F4FBFC', surface2: '#B9DCE6', ink: '#1A1C2C', muted: '#4B5876',
       line: '#1A1C2C', accent: '#E43B44', accentInk: '#FFFFFF', good: '#3E8948', bad: '#E43B44',

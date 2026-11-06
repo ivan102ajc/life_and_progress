@@ -7,6 +7,7 @@
 //    заставляют листья желтеть и опадать на землю.
 
 import { SPHERES, SKILL_BY_ID } from './data.js';
+import { T as tt, name as nm, formatMinutes } from './i18n.js';
 
 const W = 600;
 const H = 520;
@@ -233,7 +234,7 @@ export function renderTree(state, theme, { selected = null, reduceMotion = false
       g1 += leafShape(pixel ? 'square' : 'leaf', 9, mix(leafPalette[0], T.sky[1], .35), bx + dx, by + dy, ANGLES[i], pixel);
       const lx = bx + Math.sin(a) * 30; const ly = by - Math.cos(a) * 30;
       tags.push(`<g class="branch tag-wrap" data-sphere="${sphere.id}">${label(sphere, lx, ly, isSel, true, pixel)}<circle cx="${r1(lx)}" cy="${r1(ly)}" r="22" fill="transparent"/></g>`);
-      branches.push(`<g class="branch is-bud${isSel ? ' is-selected' : ''}" data-sphere="${sphere.id}" tabindex="0" role="button" aria-label="${sphere.name}: ещё не проросла">${g1}</g>`);
+      branches.push(`<g class="branch is-bud${isSel ? ' is-selected' : ''}" data-sphere="${sphere.id}" tabindex="0" role="button" aria-label="${nm(sphere)}: ${tt('ещё не проросла', 'not sprouted yet')}">${g1}</g>`);
       return;
     }
 
@@ -332,10 +333,10 @@ export function renderTree(state, theme, { selected = null, reduceMotion = false
     const hit = curve.map(p => p.map(r1).join(' '));
     hits.push(`<g class="branch" data-sphere="${sphere.id}"><path d="M${hit[0]} C${hit[1]} ${hit[2]} ${hit[3]}" stroke="transparent" stroke-width="30" fill="none" stroke-linecap="round"/></g>`);
 
-    branches.push(`<g class="branch${isSel ? ' is-selected' : ''}" data-sphere="${sphere.id}" tabindex="0" role="button" aria-label="${sphere.name}, уровень ${s.level}, жизненная сила ${s.health}%"><g class="sway"${sway}>${g1}</g></g>`);
+    branches.push(`<g class="branch${isSel ? ' is-selected' : ''}" data-sphere="${sphere.id}" tabindex="0" role="button" aria-label="${nm(sphere)}, ${tt('уровень', 'level')} ${s.level}, ${tt('жизненная сила', 'vitality')} ${s.health}%"><g class="sway"${sway}>${g1}</g></g>`);
   });
 
-  return `<svg viewBox="${r1(vbX)} ${r1(vbY)} ${r1(vbW)} ${r1(vbH)}" xmlns="http://www.w3.org/2000/svg" class="tree-svg${pixel ? ' is-pixel' : ''}"${pixel ? ' shape-rendering="crispEdges"' : ''} role="img" aria-label="Твоё дерево: ${state.stage.name}, уровень ${level}">
+  return `<svg viewBox="${r1(vbX)} ${r1(vbY)} ${r1(vbW)} ${r1(vbH)}" xmlns="http://www.w3.org/2000/svg" class="tree-svg${pixel ? ' is-pixel' : ''}"${pixel ? ' shape-rendering="crispEdges"' : ''} role="img" aria-label="${tt('Твоё дерево', 'Your tree')}: ${nm(state.stage)}, ${tt('уровень', 'level')} ${level}">
     <defs>${defs.join('')}</defs>
     ${sky.join('')}${back.join('')}
     <g class="fallen">${fallen.join('')}</g>
@@ -371,13 +372,7 @@ export function subColor(sphereColor, i) {
   return t >= 0 ? mix(sphereColor, '#ffffff', t) : mix(sphereColor, '#000000', -t);
 }
 
-export function formatMinutes(m) {
-  if (!m) return '0 мин';
-  const h = Math.floor(m / 60);
-  const mm = Math.round(m % 60);
-  if (!h) return `${mm} мин`;
-  return mm ? `${h} ч ${mm} мин` : `${h} ч`;
-}
+export { formatMinutes };
 
 const esc = (v) => String(v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -490,7 +485,7 @@ export function renderBranch(state, theme, sphereId, { reduceMotion = false, neg
 
     // Подпись
     const name = sb.name.length > 16 ? sb.name.slice(0, 15) + '…' : sb.name;
-    const meta = (sb.minutes ? formatMinutes(sb.minutes) : sb.xp ? `${sb.xp} опыта` : 'ещё почка') +
+    const meta = (sb.minutes ? formatMinutes(sb.minutes) : sb.xp ? tt(`${sb.xp} опыта`, `${sb.xp} XP`) : tt('ещё почка', 'still a bud')) +
       (share ? ` · ${Math.round(share * 100)}%` : '');
     const lw = Math.round(Math.max(name.length * 10.4 + 38, meta.length * 7.9 + 26) * k);
     const lh = Math.round(46 * k);
@@ -540,14 +535,14 @@ export function renderBranch(state, theme, sphereId, { reduceMotion = false, neg
   if (n === 0) {
     const p = bez(...limb, n ? 0.93 : 0.45);
     const bx = r1(p.x); const by = r1(p.y - (n ? 52 : 120));
-    addBud = `<g class="add-sub" data-action="add-sub" tabindex="0" role="button" aria-label="Добавить подветвь">
+    addBud = `<g class="add-sub" data-action="add-sub" tabindex="0" role="button" aria-label="${tt('Добавить подветвь', 'Add a sub-branch')}">
       <circle cx="${bx}" cy="${by}" r="24" class="add-sub-bg"/>
       <path d="M${bx - 9} ${by}h18M${bx} ${by - 9}v18" class="add-sub-plus"/>
-      ${n ? '' : `<text x="${bx}" y="${by - 38}" class="add-sub-text">Добавь подветвь</text>`}
+      ${n ? '' : `<text x="${bx}" y="${by - 38}" class="add-sub-text">${tt('Добавь подветвь', 'Add a sub-branch')}</text>`}
     </g>`;
   }
 
-  return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" class="tree-svg branch-svg${pixel ? ' is-pixel' : ''}${reduceMotion ? '' : ' is-zoomed-in'}"${pixel ? ' shape-rendering="crispEdges"' : ''} role="img" aria-label="Ветвь «${sphere.name}» крупным планом">
+  return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" class="tree-svg branch-svg${pixel ? ' is-pixel' : ''}${reduceMotion ? '' : ' is-zoomed-in'}"${pixel ? ' shape-rendering="crispEdges"' : ''} role="img" aria-label="${tt(`Ветвь «${nm(sphere)}» крупным планом`, `${nm(sphere)} branch close up`)}">
     <defs>${defs.join('')}</defs>
     ${parts.join('')}
     <g>${leavesBack.join('')}</g>
