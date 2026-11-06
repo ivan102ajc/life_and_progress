@@ -270,6 +270,22 @@ export function renderTree(state, theme, { selected = null, reduceMotion = false
       anchors.push({ x: end[0], y: end[1], w: 1.5 });
       fruits.push(end);
     });
+    // Развилка на кончике: подветви, в которых уже есть опыт.
+    const subs = (s.subList || []).filter(x => x.xp > 0).slice(0, 6);
+    if (subs.length) {
+      const total = subs.reduce((acc, x) => acc + x.xp, 0) || 1;
+      const baseAng = Math.atan2(dir[1], dir[0]);
+      subs.forEach((sb, k) => {
+        const spread = subs.length === 1 ? 0 : (k / (subs.length - 1) - 0.5) * Math.min(1.5, 0.42 * subs.length);
+        let ang = baseAng + spread;
+        if (Math.sin(ang) > 0.25) ang = baseAng - Math.abs(spread) * 0.5; // не вниз
+        const tl = (9 + 30 * Math.sqrt(sb.xp / total)) * growth;
+        const end = [tip[0] + Math.cos(ang) * tl, tip[1] + Math.sin(ang) * tl];
+        const mid = [tip[0] + Math.cos(ang) * tl * .5, tip[1] + Math.sin(ang) * tl * .5 - 2];
+        g1 += ribbon([[tip[0], tip[1]], mid, mid, end], Math.min(w0 * .45, 2.6), 0.7, 6, { fill: branchColor, pixel, extra: glowAttr });
+        anchors.push({ x: end[0], y: end[1], w: 1.2 });
+      });
+    }
     for (let k = 0; k < 3; k++) {
       const p = bez(...curve, 0.5 + k * 0.17);
       anchors.push({ x: p.x, y: p.y, w: 0.8 });
@@ -336,4 +352,204 @@ function label(sphere, x, y, selected, bud, pixel, level) {
     ? `<text x="${r1(x + 12)}" y="${r1(y + 12)}" class="tag-level">${level}</text>`
     : '';
   return `<g class="tag${selected ? ' is-selected' : ''}${bud ? ' is-bud' : ''}">${shape}<text x="${r1(x)}" y="${r1(y + 1)}" class="tag-icon">${sphere.icon}</text>${lvl}</g>`;
+}
+
+
+// ---------------------------------------------------------------------------
+// Приближенная ветвь: одна сфера крупным планом, с подветвями.
+//  • длина и толщина подветви — сколько опыта в неё вложено за всё время;
+//  • листья — тоже по опыту; если подветвь давно не поливали, листья желтеют;
+//  • на кончике — подпись с названием и временем.
+// ---------------------------------------------------------------------------
+
+export function subColor(sphereColor, i) {
+  const steps = [0, .28, -.22, .45, -.38, .14, -.1, .6, -.5, .36, -.3, .52];
+  const t = steps[i % steps.length];
+  return t >= 0 ? mix(sphereColor, '#ffffff', t) : mix(sphereColor, '#000000', -t);
+}
+
+export function formatMinutes(m) {
+  if (!m) return '0 мин';
+  const h = Math.floor(m / 60);
+  const mm = Math.round(m % 60);
+  if (!h) return `${mm} мин`;
+  return mm ? `${h} ч ${mm} мин` : `${h} ч`;
+}
+
+const esc = (v) => String(v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+export function renderBranch(state, theme, sphereId, { reduceMotion = false, neglectDays = 7, labelScale = 1 } = {}) {
+  const k = labelScale; // на телефоне подписи крупнее, чтобы их можно было прочитать
+  const T = theme.tree;
+  const pixel = Boolean(T.pixel);
+  const sphere = SPHERES.find(x => x.id === sphereId);
+  const s = state.spheres[sphereId];
+  const subs = s.subList || [];
+  const br = rng(hash('zoom:' + sphereId));
+  const leafPalette = T.leaves || [sphere.color, mix(sphere.color, '#ffffff', .25), mix(sphere.color, '#000000', .15)];
+  const sphereWither = clamp((0.7 - s.health / 100) / 0.7, 0, 1);
+  const limbColor = T.glow ? sphere.color : T.trunk;
+  const glowAttr = T.glow ? ' filter="url(#glow2)"' : '';
+
+  const parts = [];
+  const defs = [`<linearGradient id="sky2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${T.sky[0]}"/><stop offset="1" stop-color="${T.sky[1]}"/></linearGradient>`];
+  if (T.glow) defs.push(`<filter id="glow2" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="2.4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>`);
+  parts.push(`<rect width="${W}" height="${H}" fill="url(#sky2)"/>`);
+
+  // Размытая листва на заднем плане — ощущение, что мы внутри кроны.
+  const bgRand = rng(hash('bg:' + sphereId));
+  let bg = '';
+  for (let i = 0; i < 16; i++) {
+    const c = T.leaves ? T.leaves[i % T.leaves.length] : leafPalette[i % leafPalette.length];
+    bg += pixel
+      ? `<rect x="${Math.round(bgRand() * W / 8) * 8}" y="${Math.round(bgRand() * H / 8) * 8}" width="${24 + Math.round(bgRand() * 4) * 8}" height="${24 + Math.round(bgRand() * 4) * 8}" fill="${c}"/>`
+      : `<circle cx="${r1(bgRand() * W)}" cy="${r1(bgRand() * H * 0.9)}" r="${r1(30 + bgRand() * 60)}" fill="${c}"/>`;
+  }
+  parts.push(`<g opacity="${T.glow ? .12 : .16}">${bg}</g>`);
+
+  // Основная ветвь: выходит слева (от ствола) и пологой дугой уходит вправо.
+  const limb = [[-30, 482], [190, 452], [400, 420], [640, 352]];
+  const limbW = clamp(18 + s.level * 1.2, 18, 36);
+  parts.push(ribbon(limb, limbW, 8, 24, { fill: limbColor, pixel, extra: glowAttr }));
+  if (!pixel && !T.glow) {
+    parts.push(ribbon([[-30, 490], [190, 460], [400, 426], [640, 357]], limbW * .35, 2.5, 20, { fill: T.trunkShade, extra: ' opacity=".5"' }));
+  }
+
+  const leavesBack = [];
+  const subsSvg = [];
+  const labels = [];
+
+  const drawLeaves = (anchorsList, count, wither, spread) => {
+    let out = '';
+    for (let k = 0; k < count; k++) {
+      const an = anchorsList[Math.floor(br() * br() * anchorsList.length)] || anchorsList[0];
+      const rad = 6 + br() * spread;
+      const th = br() * Math.PI * 2;
+      const x = an.x + Math.cos(th) * rad;
+      const y = an.y + Math.sin(th) * rad * 0.85;
+      const size = 13 + br() * 7;
+      const roll = br();
+      const color = roll < wither
+        ? T.wither[Math.floor(br() * T.wither.length)]
+        : leafPalette[Math.floor(br() * leafPalette.length)];
+      out += leafShape(T.leafShape, size, color, x, y, br() * 360, pixel);
+    }
+    return out;
+  };
+
+  // Листья на конце самой ветви — «общий» опыт, не разложенный по подветвям.
+  const limbTipAnchors = [{ x: 600, y: 360 }, { x: 570, y: 372 }, { x: 625, y: 345 }];
+  const generalCount = clamp(Math.round(4 + Math.sqrt(s.generalXp || 0) * 1.4), subs.length ? 3 : 8, 34);
+  leavesBack.push(drawLeaves(limbTipAnchors, generalCount, sphereWither, 26));
+
+  const n = subs.length;
+  const labelBoxes = [];
+  const total = subs.reduce((a, x) => a + x.xp, 0);
+  const maxXp = Math.max(1, ...subs.map(x => x.xp));
+  subs.forEach((sb, i) => {
+    const t = n === 1 ? 0.45 : 0.14 + 0.7 * (i / (n - 1));
+    const p = bez(...limb, t);
+    // Подветви растут вверх веером: левые клонятся влево, правые — вправо.
+    const lean = (t - 0.5) * 0.95 + (br() - 0.5) * 0.12;
+    const share = total ? sb.xp / total : 0;
+    const rel = sb.xp / maxXp;
+    const len = Math.min(sb.xp > 0 ? 80 + 210 * Math.sqrt(rel) : 40, p.y - 120);
+    const w = sb.xp > 0 ? 5 + 10 * Math.sqrt(rel) : 3.5;
+    // Кончик не должен уходить за край картинки.
+    const dx = clamp(Math.sin(lean) * len, 46 - p.x, W - 46 - p.x);
+    const end = [p.x + dx, p.y - Math.sqrt(Math.max(1, len * len - dx * dx))];
+    const ang = Math.atan2(end[1] - p.y, end[0] - p.x);
+    const up = lean < 0;
+    const bend = (up ? -1 : 1) * 16;
+    const c1 = [p.x + Math.cos(ang) * len * .35 - Math.sin(ang) * bend, p.y + Math.sin(ang) * len * .35 + Math.cos(ang) * bend];
+    const c2 = [p.x + Math.cos(ang) * len * .7, p.y + Math.sin(ang) * len * .7 - 6];
+    const curve = [[p.x, p.y], c1, c2, end];
+    const neglect = sb.idleDays == null ? 0 : clamp((sb.idleDays - neglectDays) / 21, 0, 0.75);
+    const wither = Math.max(sphereWither, neglect);
+    const color = T.glow ? subColor(sphere.color, i) : mix(limbColor, T.dead, wither * .5);
+
+    let g = ribbon(curve, w, 1.4, 12, { fill: color, pixel, extra: glowAttr });
+    const anchorsList = [{ x: end[0], y: end[1] }];
+    // мелкие веточки для живости
+    const twigs = sb.xp > 0 ? clamp(Math.round(1 + rel * 3), 1, 4) : 0;
+    for (let k = 0; k < twigs; k++) {
+      const q = bez(...curve, 0.45 + 0.4 * (k / Math.max(1, twigs)));
+      const side = k % 2 ? 1 : -1;
+      let ta = q.ang + side * 0.8;
+      if (Math.sin(ta) > 0.2) ta = q.ang - side * 0.8;
+      const tl = 16 + 14 * rel;
+      const te = [q.x + Math.cos(ta) * tl, q.y + Math.sin(ta) * tl];
+      g += ribbon([[q.x, q.y], [q.x + Math.cos(ta) * tl * .5, q.y + Math.sin(ta) * tl * .5 - 2], te, te], Math.max(1.2, w * .4), .6, 5, { fill: color, pixel, extra: glowAttr });
+      anchorsList.push({ x: te[0], y: te[1] });
+    }
+    const count = sb.xp > 0 ? clamp(Math.round(4 + Math.sqrt(sb.xp) * 1.5), 4, 46) : 1;
+    g += `<g${glowAttr}>${sb.xp > 0 ? drawLeaves(anchorsList, count, wither, 10 + rel * 18) : leafShape(T.leafShape, 11, mix(leafPalette[0], T.sky[1], .4), end[0], end[1], 0, pixel)}</g>`;
+
+    // Подпись
+    const name = sb.name.length > 16 ? sb.name.slice(0, 15) + '…' : sb.name;
+    const meta = (sb.minutes ? formatMinutes(sb.minutes) : sb.xp ? `${sb.xp} опыта` : 'ещё почка') +
+      (share ? ` · ${Math.round(share * 100)}%` : '');
+    const lw = Math.round(Math.max(name.length * 10.4 + 38, meta.length * 7.9 + 26) * k);
+    const lh = Math.round(46 * k);
+    labelBoxes.push({
+      i, name, meta, w: lw, h: lh, tip: end,
+      x: clamp(end[0] - lw / 2, 6, W - lw - 6), y: end[1] - lh - 22,
+      dot: subColor(sphere.color, i), neglected: wither > .4,
+    });
+
+    const hit = curve.map(pt => pt.map(r1).join(' '));
+    subsSvg.push(`<g class="subbranch" data-sub="${esc(sb.id)}" tabindex="0" role="button" aria-label="${esc(sb.name)}: ${esc(meta)}">
+      ${g}<path d="M${hit[0]} C${hit[1]} ${hit[2]} ${hit[3]}" stroke="transparent" stroke-width="36" fill="none" stroke-linecap="round"/>
+    </g>`);
+  });
+
+  // Раздвигаем подписи, чтобы они не налезали друг на друга.
+  const placed = [];
+  const hits = (a, b) => a.x < b.x + b.w + 4 && b.x < a.x + a.w + 4 && a.y < b.y + b.h + 4 && b.y < a.y + a.h + 4;
+  for (const box of [...labelBoxes].sort((a, b) => a.y - b.y)) {
+    box.y = clamp(box.y, 6, H - box.h - 70);
+    let guard = 0;
+    while (placed.some(o => hits(o, box)) && guard++ < 40) {
+      const o = placed.find(q => hits(q, box));
+      box.y = o.y + o.h + 6;
+      if (box.y > H - box.h - 70) { box.y = 6; box.x = clamp(box.x + (box.i % 2 ? 40 : -40), 6, W - box.w - 6); }
+    }
+    placed.push(box);
+  }
+  for (const box of labelBoxes) {
+    // Если подпись пришлось сдвинуть — тонкая линия ведёт к кончику подветви.
+    const cx = clamp(box.tip[0], box.x + 12, box.x + box.w - 12);
+    const by = box.y + box.h;
+    const leader = Math.hypot(cx - box.tip[0], by - box.tip[1]) > 34
+      ? `<path d="M${r1(cx)} ${r1(box.tip[1] < box.y ? box.y : by)} L${r1(box.tip[0])} ${r1(box.tip[1])}" class="sub-tag-line"/>`
+      : '';
+    labels.push(`<g class="sub-tag${box.neglected ? ' is-neglected' : ''}" data-sub="${esc(subs[box.i].id)}">${leader}
+      <rect x="${r1(box.x)}" y="${r1(box.y)}" width="${box.w}" height="${box.h}" rx="${pixel ? 0 : r1(13 * k)}" class="sub-tag-bg"/>
+      <circle cx="${r1(box.x + 15 * k)}" cy="${r1(box.y + 16 * k)}" r="${r1(6 * k)}" fill="${box.dot}"/>
+      <text x="${r1(box.x + 27 * k)}" y="${r1(box.y + 17 * k)}" class="sub-tag-name" style="font-size:${r1(17 * k)}px">${esc(box.name)}</text>
+      <text x="${r1(box.x + 12 * k)}" y="${r1(box.y + 36 * k)}" class="sub-tag-meta" style="font-size:${r1(13 * k)}px">${esc(box.meta)}</text>
+    </g>`);
+  }
+
+  // Почка «добавить подветвь» — только пока подветвей нет
+  // (потом для этого есть кнопка в панели, чтобы не мешать подписям).
+  let addBud = '';
+  if (n === 0) {
+    const p = bez(...limb, n ? 0.93 : 0.45);
+    const bx = r1(p.x); const by = r1(p.y - (n ? 52 : 120));
+    addBud = `<g class="add-sub" data-action="add-sub" tabindex="0" role="button" aria-label="Добавить подветвь">
+      <circle cx="${bx}" cy="${by}" r="24" class="add-sub-bg"/>
+      <path d="M${bx - 9} ${by}h18M${bx} ${by - 9}v18" class="add-sub-plus"/>
+      ${n ? '' : `<text x="${bx}" y="${by - 38}" class="add-sub-text">Добавь подветвь</text>`}
+    </g>`;
+  }
+
+  return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" class="tree-svg branch-svg${pixel ? ' is-pixel' : ''}${reduceMotion ? '' : ' is-zoomed-in'}"${pixel ? ' shape-rendering="crispEdges"' : ''} role="img" aria-label="Ветвь «${sphere.name}» крупным планом">
+    <defs>${defs.join('')}</defs>
+    ${parts.join('')}
+    <g>${leavesBack.join('')}</g>
+    ${subsSvg.join('')}
+    ${addBud}
+    <g class="sub-tags">${labels.join('')}</g>
+  </svg>`;
 }

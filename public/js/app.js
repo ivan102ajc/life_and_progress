@@ -4,10 +4,11 @@ import { SPHERES, SPHERE_BY_ID, SKILLS, SKILL_BY_ID, MATERIALS, RULES } from './
 import {
   newSave, normalizeSave, compute, uid, allActions, allBadHabits, findAction, findBad,
   findMaterial, countOnDay, skillStatus, dependentSkills, dayKey,
+  findSub, subsOf, SUB_RULES,
   STREAK_MILESTONES, nextMilestone,
 } from './game.js';
 import { THEMES, THEME_BY_ID, applyTheme } from './themes.js';
-import { renderTree } from './tree.js';
+import { renderTree, renderBranch, subColor, formatMinutes } from './tree.js';
 import { api, auth } from './api.js';
 import { mergeSaves, sameSave } from './sync.js';
 
@@ -28,6 +29,8 @@ const ui = {
   matSphere: 'all',
   sync: 'saved',
   authMode: 'register',
+  zoom: null,           // id ветви, к которой приблизились
+  subPeriod: 'week',    // период сравнения подветвей: week | month | all
 };
 
 // ---------------------------------------------------------------------------
@@ -94,7 +97,7 @@ function syncTelegram() {
   if (!wa) return;
   const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
   try { wa.setHeaderColor?.(bg); wa.setBackgroundColor?.(bg); wa.setBottomBarColor?.(bg); } catch { /* старая версия */ }
-  const needBack = !$('#sheet').hidden || (ui.save && ui.tab !== 'tree');
+  const needBack = !$('#sheet').hidden || (ui.save && (ui.tab !== 'tree' || ui.zoom));
   try { needBack ? wa.BackButton?.show() : wa.BackButton?.hide(); } catch { /* старая версия */ }
 }
 
@@ -102,6 +105,8 @@ function onTelegramBack() {
   if (!$('#sheet').hidden) {
     closeSheet();
     if (ui.selected) { ui.selected = null; render(); }
+  } else if (ui.zoom) {
+    zoomOut();
   } else if (ui.tab !== 'tree') {
     ui.tab = 'tree';
     render();
@@ -271,9 +276,9 @@ function eventTime() {
   return ui.logDay === 1 ? Date.now() - DAY : Date.now();
 }
 
-function addEvent(k, ref, t = eventTime()) {
+function addEvent(k, ref, t = eventTime(), extra = {}) {
   const before = ui.state;
-  const e = { id: uid(), t, k, ref, c: Date.now() };
+  const e = { id: uid(), t, k, ref, c: Date.now(), ...extra };
   ui.save.events.push(e);
   const after = compute(ui.save);
   reportChange(before, after, e);
@@ -300,8 +305,11 @@ function reportChange(before, after, e) {
   if (!eff || !eff.valid) { toast('Это не засчиталось', 'info'); return; }
   for (const [sid, xp] of Object.entries(eff.gains)) {
     const sp = SPHERE_BY_ID[sid];
-    const note = eff.repeat ? ' (повтор за день — опыта меньше)' : '';
-    toast(`+${xp} опыта: ${sp.icon} ${sp.name}${note}`, 'good');
+    const sub = eff.sub ? findSub(ui.save, eff.sub) : null;
+    const note = eff.repeat ? ' (повтор за день — опыта меньше)'
+      : eff.over ? ` (больше ${SUB_RULES.dailyFullMinutes / 60} ч за день — опыт медленнее)` : '';
+    const where = sub ? `${sp.icon} ${sub.name}${eff.minutes ? ', ' + formatMinutes(eff.minutes) : ''}` : `${sp.icon} ${sp.name}`;
+    toast(`+${xp} опыта: ${where}${note}`, 'good');
     const lb = before.spheres[sid].level; const la = after.spheres[sid].level;
     if (la > lb) toast(`Ветвь «${sp.name}» выросла до уровня ${la}`, 'level');
   }
@@ -399,15 +407,26 @@ function render() {
   ui.state = compute(ui.save);
   const st = ui.state;
 
+  if (ui.zoom && ui.tab !== 'tree') ui.zoom = null;
   $('#game').dataset.tab = ui.tab;
+  $('#game').classList.toggle('is-zoomed', Boolean(ui.zoom));
   renderTopbar(st);
-  $('#tree').innerHTML = renderTree(st, theme, { selected: ui.selected, reduceMotion });
+  const tree = $('#tree');
+  const html = ui.zoom
+    ? renderBranch(st, theme, ui.zoom, {
+      reduceMotion: reduceMotion || tree.dataset.view === 'branch:' + ui.zoom,
+      neglectDays: SUB_RULES.neglectDays,
+      labelScale: (tree.clientWidth || window.innerWidth) < 520 ? 1.45 : 1,
+    })
+    : renderTree(st, theme, { selected: ui.selected, reduceMotion });
+  tree.innerHTML = html;
+  tree.dataset.view = ui.zoom ? 'branch:' + ui.zoom : 'tree';
   $('#scene-caption').innerHTML = sceneCaption(st);
   for (const b of document.querySelectorAll('#tabs [data-tab]')) {
     b.setAttribute('aria-current', b.dataset.tab === ui.tab ? 'page' : 'false');
   }
   const panel = $('#panel');
-  panel.innerHTML = {
+  panel.innerHTML = ui.zoom ? panelBranch(st) : {
     tree: panelTree, log: panelLog, skills: panelSkills, materials: panelMaterials, history: panelHistory,
   }[ui.tab](st);
   syncTelegram();
@@ -437,6 +456,13 @@ function renderTopbar(st) {
 }
 
 function sceneCaption(st) {
+  if (ui.zoom) {
+    const sp = SPHERE_BY_ID[ui.zoom];
+    return `<div class="zoom-bar">
+      <button class="caption-chip" data-action="zoom-out">← Всё дерево</button>
+      <span class="caption-text">${sp.icon} ${sp.name} крупным планом. Нажми на подветвь, чтобы отметить время.</span>
+    </div>`;
+  }
   if (ui.selected) {
     const sp = SPHERE_BY_ID[ui.selected];
     const s = st.spheres[ui.selected];
@@ -471,7 +497,7 @@ function panelTree(st) {
         <span class="sr-main">
           <span class="sr-top"><strong>${sp.name}</strong><span class="sr-lvl">${s.started ? `ур. ${s.level}` : 'почка'}</span></span>
           <span class="bar"><i style="width:${Math.round(s.progress * 100)}%"></i></span>
-          <span class="sr-sub">${s.started ? `${s.into}/${s.need} опыта · сила ${s.health}%, ${healthWord(s.health)}` : 'ещё не начато'} ${idle}</span>
+          <span class="sr-sub">${s.started ? `${s.into}/${s.need} опыта · сила ${s.health}%, ${healthWord(s.health)}` : 'ещё не начато'}${s.subList.length ? ` · ${s.subList.length} ${subWord(s.subList.length)}` : ''} ${idle}</span>
         </span>
       </button>`;
   }).join('');
@@ -656,6 +682,7 @@ function panelHistory(st) {
     let title = '';
     let icon = '';
     if (e.k === 'act') { const a = findAction(ui.save, e.ref); title = a?.name || 'Удалённое дело'; icon = SPHERE_BY_ID[a?.sphere]?.icon || '•'; }
+    if (e.k === 'time') { const sb = findSub(ui.save, e.ref); title = `${sb?.name || 'Удалённая подветвь'} · ${formatMinutes(Number(e.m) || 0)}`; icon = SPHERE_BY_ID[sb?.sphere]?.icon || '⏱'; }
     if (e.k === 'bad') { const b = findBad(ui.save, e.ref); title = b?.name || 'Удалённая привычка'; icon = '🥀'; }
     if (e.k === 'skill') { const k = SKILL_BY_ID[e.ref]; title = 'Навык: ' + (k?.name || '?'); icon = '🌱'; }
     if (e.k === 'mat') { const m = findMaterial(e.ref); title = 'Изучил: ' + (m?.title || '?'); icon = '📖'; }
@@ -738,32 +765,265 @@ function confirmSheet(title, text, okLabel, onOk, danger = false) {
     </div>`, () => { onOk(); });
 }
 
-function openSphere(id) {
-  ui.selected = id;
+// ---------------------------------------------------------------------------
+// Приближение к ветви и подветви
+// ---------------------------------------------------------------------------
+
+function subWord(n) {
+  const a = n % 10; const b = n % 100;
+  if (a === 1 && b !== 11) return 'подветвь';
+  if (a >= 2 && a <= 4 && (b < 12 || b > 14)) return 'подветви';
+  return 'подветвей';
+}
+
+function animateViewBox(svg, from, to, ms) {
+  return new Promise((resolve) => {
+    const t0 = performance.now();
+    const ease = (t) => (t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
+    const step = (now) => {
+      const k = Math.min(1, (now - t0) / ms);
+      const e = ease(k);
+      svg.setAttribute('viewBox', from.map((v, i) => (v + (to[i] - v) * e).toFixed(1)).join(' '));
+      if (k < 1) requestAnimationFrame(step); else resolve();
+    };
+    requestAnimationFrame(step);
+  });
+}
+
+// Камера плавно наезжает на ветку, потом показываем её крупным планом.
+async function zoomTo(sphereId) {
+  if (ui.zooming) return;
+  ui.selected = null;
+  ui.tab = 'tree';
+  const svg = $('#tree svg');
+  const g = svg?.querySelector(`.branch[data-sphere="${sphereId}"]`);
+  if (svg && g && !reduceMotion && $('#tree').dataset.view === 'tree') {
+    ui.zooming = true;
+    try {
+      const from = svg.getAttribute('viewBox').split(/\s+/).map(Number);
+      const bb = g.getBBox();
+      const aspect = from[2] / from[3];
+      let w = Math.max(bb.width, bb.height * aspect) * 1.35;
+      w = Math.max(w, 120);
+      const h = w / aspect;
+      const to = [bb.x + bb.width / 2 - w / 2, bb.y + bb.height / 2 - h / 2, w, h];
+      $('#tree').classList.add('is-zooming');
+      await animateViewBox(svg, from, to, 420);
+    } catch { /* без анимации */ }
+    $('#tree').classList.remove('is-zooming');
+    ui.zooming = false;
+  }
+  ui.zoom = sphereId;
   render();
-  const sp = SPHERE_BY_ID[id];
-  const s = ui.state.spheres[id];
-  const acts = allActions(ui.save).filter(a => a.sphere === id);
+  if (window.matchMedia('(max-width: 899px)').matches) window.scrollTo({ top: 0, behavior: 'auto' });
+}
+
+async function zoomOut() {
+  const sphereId = ui.zoom;
+  ui.zoom = null;
+  render();
+  const svg = $('#tree svg');
+  const g = svg?.querySelector(`.branch[data-sphere="${sphereId}"]`);
+  if (!svg || !g || reduceMotion) return;
+  try {
+    const full = svg.getAttribute('viewBox').split(/\s+/).map(Number);
+    const bb = g.getBBox();
+    const aspect = full[2] / full[3];
+    const w = Math.max(120, Math.max(bb.width, bb.height * aspect) * 1.35);
+    const h = w / aspect;
+    const from = [bb.x + bb.width / 2 - w / 2, bb.y + bb.height / 2 - h / 2, w, h];
+    svg.setAttribute('viewBox', from.join(' '));
+    await animateViewBox(svg, from, full, 380);
+  } catch { /* без анимации */ }
+}
+
+function periodValue(sb, kind) {
+  const key = { week: 7, month: 30, all: '' }[ui.subPeriod];
+  return sb[kind + key];
+}
+
+function panelBranch(st) {
+  const sp = SPHERE_BY_ID[ui.zoom];
+  const s = st.spheres[ui.zoom];
+  const subs = s.subList;
   const t = eventTime();
-  openSheet(`
+
+  // Сравнение подветвей за выбранный период: по времени, а если времени нет — по опыту.
+  const byMinutes = subs.some(x => periodValue(x, 'minutes') > 0);
+  const kind = byMinutes ? 'minutes' : 'xp';
+  const rows = [...subs].sort((a, b) => periodValue(b, kind) - periodValue(a, kind) || a.order - b.order);
+  const max = Math.max(1, ...rows.map(x => periodValue(x, kind)));
+  const sum = rows.reduce((a, x) => a + periodValue(x, kind), 0);
+  const periodName = { week: 'за неделю', month: 'за месяц', all: 'за всё время' }[ui.subPeriod];
+
+  let insight = '';
+  if (subs.length >= 2 && sum > 0) {
+    const top = rows[0];
+    const neglected = subs.filter(x => x.idleDays == null || x.idleDays >= SUB_RULES.neglectDays)
+      .sort((a, b) => (b.idleDays ?? 1e9) - (a.idleDays ?? 1e9))[0];
+    insight = `<p class="insight">Больше всего ${byMinutes ? 'времени' : 'опыта'} ${periodName}: <b>${esc(top.name)}</b> — ${Math.round(periodValue(top, kind) / sum * 100)}%.` +
+      (neglected ? ` Давно не поливал: <b>${esc(neglected.name)}</b>${neglected.idleDays == null ? ' (ещё ни разу)' : ` — ${neglected.idleDays} ${daysWord(neglected.idleDays)}`}.` : '') + '</p>';
+  }
+
+  const subRows = rows.map((sb) => {
+    const i = subs.indexOf(sb);
+    const v = periodValue(sb, kind);
+    const minutesP = periodValue(sb, 'minutes');
+    const idle = sb.idleDays == null ? 'ещё не начато' : sb.idleDays === 0 ? 'сегодня' : sb.idleDays === 1 ? 'вчера' : `${sb.idleDays} ${daysWord(sb.idleDays)} назад`;
+    const warn = sb.idleDays == null || sb.idleDays >= SUB_RULES.neglectDays;
+    return `
+      <div class="sub-row" style="--c:${subColor(sp.color, i)}">
+        <button class="sub-main" data-action="sub-menu" data-id="${sb.id}">
+          <span class="sub-top"><strong>${esc(sb.name)}</strong>${flameChip(st, sb.id)}<span class="sub-lvl">ур. ${sb.level}</span></span>
+          <span class="bar"><i style="width:${Math.round(v / max * 100)}%"></i></span>
+          <span class="sub-meta">${minutesP ? formatMinutes(minutesP) : '0 мин'} ${periodName} · ${sb.xp} опыта всего · <span class="${warn ? 'warn' : ''}">${idle}</span></span>
+        </button>
+        <button class="btn btn-small btn-primary" data-action="log-time" data-id="${sb.id}" aria-label="Отметить время: ${esc(sb.name)}">+ время</button>
+      </div>`;
+  }).join('');
+
+  const acts = allActions(ui.save).filter(a => a.sphere === ui.zoom);
+  return `
     <div class="sphere-head" style="--c:${sp.color}">
       <span class="sh-icon">${sp.icon}</span>
       <div><h2>${sp.name}</h2><p class="muted">${s.started ? `Уровень ${s.level} · ${s.into}/${s.need} опыта` : 'Ветвь ещё не проросла'}</p></div>
     </div>
     <div class="meters">
-      <div><span>Опыт до уровня ${s.level + 1}</span><div class="bar"><i style="width:${Math.round(s.progress * 100)}%"></i></div></div>
+      <div><span>Опыт до уровня ${s.level + 1}</span><div class="bar"><i style="width:${Math.round(s.progress * 100)}%;background:${sp.color}"></i></div></div>
       <div><span>Жизненная сила: ${s.health}% — ${healthWord(s.health)}</span><div class="bar"><i style="width:${s.health}%;background:${s.health >= 60 ? 'var(--good)' : s.health >= 35 ? '#E0A526' : 'var(--bad)'}"></i></div></div>
     </div>
-    <p class="small muted">Сила влияет на скорость роста: сейчас ветвь растёт на ${Math.round(50 + s.health / 2)}%. Восстанавливается от полезных дел.</p>
-    <h3>Быстро отметить ${ui.logDay ? 'за вчера' : 'за сегодня'}</h3>
-    <div class="act-list compact">
-      ${acts.map(a => `<button class="act" data-action="log-act" data-id="${a.id}" data-keep="1" style="--c:${sp.color}">
-        <span class="act-name">${esc(a.name)}</span>${flameChip(ui.state, a.id)}<span class="act-xp">+${Math.round(a.xp * RULES.repeatFactors[Math.min(countOnDay(ui.state, a.id, t), 2)])}</span></button>`).join('')}
+
+    <div class="panel-head spaced">
+      <h2>Подветви</h2>
+      ${subs.length ? `<div class="segmented small">
+        <button aria-selected="${ui.subPeriod === 'week'}" data-action="sub-period" data-period="week">Неделя</button>
+        <button aria-selected="${ui.subPeriod === 'month'}" data-action="sub-period" data-period="month">Месяц</button>
+        <button aria-selected="${ui.subPeriod === 'all'}" data-action="sub-period" data-period="all">Всё</button>
+      </div>` : ''}
+      <p class="muted">${subs.length
+        ? 'Раздели ветвь на части — предметы, виды спорта, проекты — и отмечай время на каждую. Сразу видно, чему уделяешь больше, а что забросил.'
+        : 'Ветвь можно разделить на подветви: например, «Разум» — на предметы в вузе. Отмечай время на каждую, и станет видно, чему ты уделяешь больше, а что забросил.'}</p>
+    </div>
+    ${insight}
+    ${subRows ? `<div class="sub-list">${subRows}</div>` : ''}
+    ${subs.length < SUB_RULES.maxPerSphere ? `<button class="btn ${subs.length ? 'btn-ghost' : 'btn-primary'} btn-wide" data-action="add-sub">Добавить подветвь</button>` : ''}
+
+    <div class="panel-head spaced">
+      <h2>Дела ветви</h2>
+      <div class="segmented small">
+        <button aria-selected="${ui.logDay === 0}" data-action="log-day" data-day="0">Сегодня</button>
+        <button aria-selected="${ui.logDay === 1}" data-action="log-day" data-day="1">Вчера</button>
+      </div>
+    </div>
+    <div class="act-list">
+      ${acts.map(a => {
+        const sb = a.sub ? findSub(ui.save, a.sub) : null;
+        return `<button class="act" data-action="log-act" data-id="${a.id}" style="--c:${sp.color}">
+        <span class="act-name">${esc(a.name)}${sb ? `<small class="act-sub">${esc(sb.name)}</small>` : ''}</span>${flameChip(st, a.id)}<span class="act-xp">+${Math.round(a.xp * RULES.repeatFactors[Math.min(countOnDay(st, a.id, t), 2)])}</span></button>`;
+      }).join('')}
     </div>
     <div class="sheet-actions">
-      <button class="btn btn-ghost" data-action="goto-skills" data-sphere="${id}">Навыки ветви</button>
-      <button class="btn btn-primary" data-action="close-sheet">Готово</button>
-    </div>`);
+      <button class="btn btn-ghost" data-action="custom-act" data-sphere="${sp.id}">Своё дело</button>
+      <button class="btn btn-ghost" data-action="goto-skills" data-sphere="${sp.id}">Навыки ветви</button>
+    </div>`;
+}
+
+const SUB_SUGGESTIONS = {
+  health: ['Бег', 'Зал', 'Плавание', 'Йога', 'Велосипед', 'Футбол'],
+  mind: ['Математика', 'Английский', 'Физика', 'Программирование', 'История', 'Чтение'],
+  career: ['Учёба по профессии', 'Свой проект', 'Портфолио', 'Подработка', 'Стажировка'],
+  finance: ['Бюджет', 'Накопления', 'Инвестиции', 'Подработка'],
+  social: ['Семья', 'Друзья', 'Отношения', 'Новые знакомства'],
+  creative: ['Рисование', 'Музыка', 'Фото', 'Писательство', 'Видео'],
+  soul: ['Медитация', 'Дневник', 'Прогулки', 'Чтение для души'],
+  home: ['Готовка', 'Уборка', 'Ремонт', 'Растения'],
+};
+
+function openAddSub(sphereId) {
+  const sp = SPHERE_BY_ID[sphereId];
+  const taken = new Set(subsOf(ui.save, sphereId).map(x => x.name.toLowerCase()));
+  const ideas = (SUB_SUGGESTIONS[sphereId] || []).filter(x => !taken.has(x.toLowerCase()));
+  openSheet(`
+    <h2>Новая подветвь: ${sp.icon} ${sp.name}</h2>
+    <form id="sheet-form" novalidate>
+      <label class="field"><span>Название</span><input name="name" maxlength="30" required placeholder="Например: ${esc(ideas[0] || 'Матанализ')}"></label>
+      ${ideas.length ? `<div class="chips wrap">${ideas.map(x => `<button type="button" class="chip" data-action="fill-sub" data-name="${esc(x)}">${esc(x)}</button>`).join('')}</div>` : ''}
+      <p class="form-error" role="alert"></p>
+      <div class="sheet-actions">
+        <button type="button" class="btn btn-ghost" data-action="close-sheet">Отмена</button>
+        <button class="btn btn-primary" type="submit">Добавить</button>
+      </div>
+    </form>`, (fd) => {
+    const name = String(fd.get('name') || '').trim().slice(0, 30);
+    const err = $('#sheet .form-error');
+    if (!name) { err.textContent = 'Напиши название'; return false; }
+    if (taken.has(name.toLowerCase())) { err.textContent = 'Такая подветвь уже есть'; return false; }
+    const order = Math.max(-1, ...ui.save.custom.subs.filter(x => x.sphere === sphereId).map(x => x.order ?? 0)) + 1;
+    const id = 'sb_' + uid();
+    ui.save.custom.subs.push({ id, sphere: sphereId, name, order, createdAt: Date.now() });
+    commit();
+    toast(`Подветвь «${name}» проросла`, 'good');
+    haptic('success');
+    setTimeout(() => openLogTime(id, true), 150);
+  });
+}
+
+function openLogTime(subId, fresh = false) {
+  const sb = findSub(ui.save, subId);
+  if (!sb) return;
+  const sp = SPHERE_BY_ID[sb.sphere];
+  const presets = [15, 30, 45, 60, 90, 120, 180];
+  openSheet(`
+    <h2>${sp.icon} ${esc(sb.name)}</h2>
+    <p>${fresh ? 'Сколько времени ты уже уделил этому? Можно пропустить и отметить потом.' : 'Сколько времени ты на это потратил?'}</p>
+    <form id="sheet-form" novalidate>
+      <div class="segmented small">
+        <button type="button" aria-selected="${ui.logDay === 0}" data-action="time-day" data-day="0">Сегодня</button>
+        <button type="button" aria-selected="${ui.logDay === 1}" data-action="time-day" data-day="1">Вчера</button>
+      </div>
+      <div class="time-grid">
+        ${presets.map(m => `<button type="button" class="time-chip" data-action="pick-time" data-m="${m}">${formatMinutes(m)}</button>`).join('')}
+      </div>
+      <label class="field"><span>Или своё число минут</span><input name="m" type="number" inputmode="numeric" min="1" max="900" placeholder="Например, 50"></label>
+      <p class="form-error" role="alert"></p>
+      <div class="sheet-actions">
+        <button type="button" class="btn btn-ghost" data-action="close-sheet">${fresh ? 'Пропустить' : 'Отмена'}</button>
+        <button class="btn btn-primary" type="submit">Отметить</button>
+      </div>
+    </form>`, (fd) => {
+    const m = Math.round(Number(fd.get('m')));
+    if (!m || m < 1 || m > 900) { $('#sheet .form-error').textContent = 'Выбери время или впиши число минут от 1 до 900'; return false; }
+    addEvent('time', subId, eventTime(), { m });
+  });
+}
+
+function openSubMenu(subId) {
+  const sb = findSub(ui.save, subId);
+  if (!sb) return;
+  const sp = SPHERE_BY_ID[sb.sphere];
+  const stat = ui.state.subStats[subId];
+  openSheet(`
+    <h2>${sp.icon} ${esc(sb.name)}</h2>
+    <p>${stat.minutes ? `Всего ${formatMinutes(stat.minutes)}, ${stat.xp} опыта. ` : stat.xp ? `${stat.xp} опыта. ` : 'Пока ни одной отметки. '}За неделю — ${formatMinutes(stat.minutes7)}, за месяц — ${formatMinutes(stat.minutes30)}.</p>
+    <form id="sheet-form" novalidate>
+      <label class="field"><span>Название</span><input name="name" maxlength="30" value="${esc(sb.name)}"></label>
+      <p class="form-error" role="alert"></p>
+      <div class="sheet-actions stack">
+        <button type="button" class="btn btn-primary" data-action="log-time" data-id="${sb.id}">Отметить время</button>
+        <button class="btn btn-ghost" type="submit">Сохранить название</button>
+        <button type="button" class="btn btn-ghost" data-action="delete-sub" data-id="${sb.id}">Удалить подветвь</button>
+        <button type="button" class="btn btn-ghost" data-action="close-sheet">Закрыть</button>
+      </div>
+    </form>`, (fd) => {
+    const name = String(fd.get('name') || '').trim().slice(0, 30);
+    if (!name) { $('#sheet .form-error').textContent = 'Название не может быть пустым'; return false; }
+    if (subsOf(ui.save, sb.sphere).some(x => x.id !== sb.id && x.name.toLowerCase() === name.toLowerCase())) {
+      $('#sheet .form-error').textContent = 'Такая подветвь уже есть'; return false;
+    }
+    sb.name = name;
+    commit();
+    toast('Название сохранено', 'info');
+  });
 }
 
 function openSettings() {
@@ -920,14 +1180,22 @@ function openAddTracker() {
     <div class="sheet-actions"><button class="btn btn-ghost" data-action="close-sheet">Отмена</button></div>`);
 }
 
-function openCustomAct() {
+function openCustomAct(presetSphere) {
+  const pre = presetSphere || (ui.filter !== 'all' ? ui.filter : null);
+  const subGroups = SPHERES.map(sp => {
+    const list = subsOf(ui.save, sp.id);
+    return list.length ? `<optgroup label="${sp.icon} ${sp.name}">${list.map(sb => `<option value="${sb.id}">${esc(sb.name)}</option>`).join('')}</optgroup>` : '';
+  }).join('');
   openSheet(`
     <h2>Своё полезное дело</h2>
     <form id="sheet-form">
-      <label class="field"><span>Что ты делаешь</span><input name="name" required maxlength="60" placeholder="Например: занимался гитарой"></label>
+      <label class="field"><span>Что ты делаешь</span><input name="name" required maxlength="60" placeholder="Например: решал задачи по матану"></label>
       <label class="field"><span>Какую ветвь растит</span>
-        <select name="sphere">${SPHERES.map(s => `<option value="${s.id}"${ui.filter === s.id ? ' selected' : ''}>${s.icon} ${s.name}</option>`).join('')}</select>
+        <select name="sphere">${SPHERES.map(s => `<option value="${s.id}"${pre === s.id ? ' selected' : ''}>${s.icon} ${s.name}</option>`).join('')}</select>
       </label>
+      ${subGroups ? `<label class="field"><span>Подветвь (необязательно)</span>
+        <select name="sub"><option value="">Без подветви</option>${subGroups}</select>
+      </label>` : ''}
       <label class="field"><span>Насколько это трудно</span>
         <select name="xp">
           <option value="6">Легко, пара минут — 6 опыта</option>
@@ -943,7 +1211,11 @@ function openCustomAct() {
     </form>`, (fd) => {
     const name = String(fd.get('name') || '').trim();
     if (!name) return false;
-    ui.save.custom.acts.push({ id: 'ca_' + uid(), name, sphere: fd.get('sphere'), xp: Number(fd.get('xp')) || 12 });
+    const sub = fd.get('sub') ? findSub(ui.save, fd.get('sub')) : null;
+    ui.save.custom.acts.push({
+      id: 'ca_' + uid(), name, sphere: sub ? sub.sphere : fd.get('sphere'), xp: Number(fd.get('xp')) || 12,
+      ...(sub ? { sub: sub.id } : {}),
+    });
     toast('Дело добавлено в список', 'info');
     commit();
   });
@@ -1026,10 +1298,21 @@ function bindEvents() {
   window.addEventListener('focus', pullFromServer);
   document.addEventListener('click', onClick);
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !$('#sheet').hidden) closeSheet();
+    if (e.key === 'Escape') {
+      if (!$('#sheet').hidden) closeSheet();
+      else if (ui.zoom) zoomOut();
+    }
     if ((e.key === 'Enter' || e.key === ' ') && e.target.closest?.('#tree .branch')) {
       e.preventDefault();
-      openSphere(e.target.closest('.branch').dataset.sphere);
+      zoomTo(e.target.closest('.branch').dataset.sphere);
+    }
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.closest?.('#tree [data-sub]')) {
+      e.preventDefault();
+      openSubMenu(e.target.closest('[data-sub]').dataset.sub);
+    }
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.closest?.('#tree .add-sub')) {
+      e.preventDefault();
+      openAddSub(ui.zoom);
     }
   });
   document.addEventListener('submit', (e) => {
@@ -1047,7 +1330,9 @@ function bindEvents() {
 
 function onClick(e) {
   const branch = e.target.closest('#tree .branch');
-  if (branch) return openSphere(branch.dataset.sphere);
+  if (branch) return zoomTo(branch.dataset.sphere);
+  const subEl = e.target.closest('#tree [data-sub]');
+  if (subEl) return openSubMenu(subEl.dataset.sub);
 
   const el = e.target.closest('[data-action]');
   if (!el) return;
@@ -1061,21 +1346,46 @@ function onClick(e) {
       ui.tab = el.dataset.tab;
       render();
       return window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
-    case 'open-sphere': return openSphere(el.dataset.sphere);
+    case 'open-sphere': return zoomTo(el.dataset.sphere);
+    case 'zoom-out': return zoomOut();
+    case 'sub-period': ui.subPeriod = el.dataset.period; return render();
+    case 'add-sub': return openAddSub(ui.zoom);
+    case 'fill-sub': {
+      const input = $('#sheet input[name=name]');
+      if (input) { input.value = el.dataset.name; input.focus(); }
+      return;
+    }
+    case 'sub-menu': return openSubMenu(id);
+    case 'log-time': return openLogTime(id);
+    case 'pick-time': {
+      const input = $('#sheet input[name=m]');
+      if (input) input.value = el.dataset.m;
+      for (const b of document.querySelectorAll('#sheet .time-chip')) b.classList.toggle('is-on', b === el);
+      return;
+    }
+    case 'time-day': {
+      ui.logDay = Number(el.dataset.day);
+      for (const b of document.querySelectorAll('#sheet [data-action=time-day]')) b.setAttribute('aria-selected', String(b === el));
+      return;
+    }
+    case 'delete-sub': {
+      const sb = findSub(ui.save, id);
+      return confirmSheet('Удалить подветвь?', `«${esc(sb.name)}» исчезнет с дерева. Опыт останется в ветви «${SPHERE_BY_ID[sb.sphere].name}», отметки — в истории.`,
+        'Удалить', () => { sb.archived = true; commit(); toast('Подветвь удалена', 'info'); }, true);
+    }
     case 'filter': ui.filter = el.dataset.sphere; return render();
     case 'skill-sphere': ui.skillSphere = el.dataset.sphere; return render();
     case 'mat-sphere': ui.matSphere = el.dataset.sphere; return render();
     case 'log-day': ui.logDay = Number(el.dataset.day); return render();
     case 'log-act':
       addEvent('act', id, el.dataset.today ? Date.now() : eventTime());
-      if (el.dataset.keep && !$('#sheet').hidden) openSphere(ui.selected);
       return;
     case 'log-bad': {
       const b = findBad(ui.save, id);
       return confirmSheet('Отметить срыв?', `«${esc(b.name)}». Листья на затронутых ветвях пожелтеют. Это нормально — главное видеть, что происходит, и не сдаваться.`,
         'Отметить честно', () => addEvent('bad', id));
     }
-    case 'custom-act': return openCustomAct();
+    case 'custom-act': return openCustomAct(el.dataset.sphere);
     case 'add-tracker': return openAddTracker();
     case 'attach-email': return openAttachEmail();
     case 'merge-login': return openMergeLogin();

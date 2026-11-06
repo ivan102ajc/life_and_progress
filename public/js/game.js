@@ -17,7 +17,7 @@ export function newSave(name = '') {
     theme: 'spring',
     createdAt: Date.now(),
     events: [],              // { id, t, k: 'act'|'bad'|'skill'|'mat', ref }
-    custom: { acts: [], bads: [] },
+    custom: { acts: [], bads: [], subs: [] },
     tracked: [],             // id дел, за огоньком которых игрок следит
     deleted: [],             // id отменённых событий (для синхронизации устройств)
     resetAt: 0,              // когда игрок нажал «Начать заново»
@@ -38,6 +38,7 @@ export function normalizeSave(save, name) {
     custom: {
       acts: Array.isArray(save.custom?.acts) ? save.custom.acts : [],
       bads: Array.isArray(save.custom?.bads) ? save.custom.bads : [],
+      subs: Array.isArray(save.custom?.subs) ? save.custom.subs : [],
     },
   };
 }
@@ -60,6 +61,31 @@ export function findAction(save, id) {
 export function findBad(save, id) {
   return BAD_HABITS.find(b => b.id === id) || save.custom.bads.find(b => b.id === id);
 }
+export function findSub(save, id) {
+  return save.custom.subs.find(x => x.id === id);
+}
+export function subsOf(save, sphereId) {
+  return save.custom.subs.filter(x => x.sphere === sphereId && !x.archived);
+}
+
+// Подветви: время в минутах превращается в опыт.
+// Час занятий ≈ 24 опыта (как «Учился час»). После 3 часов в день по одной
+// подветви опыт идёт в четыре раза медленнее — чтобы не «накручивали» минуты.
+export const SUB_RULES = {
+  xpPerMinute: 0.4,
+  dailyFullMinutes: 180,
+  overFactor: 0.25,
+  xpBase: 20,           // уровень подветви: 20·n·(n+1)/2 опыта
+  maxPerSphere: 12,
+  neglectDays: 7,       // через сколько дней подветвь начинает желтеть
+};
+
+export function minutesToXp(minutes, alreadyToday) {
+  const full = Math.max(0, Math.min(minutes, SUB_RULES.dailyFullMinutes - alreadyToday));
+  const over = minutes - full;
+  return (full + over * SUB_RULES.overFactor) * SUB_RULES.xpPerMinute;
+}
+
 export function findMaterial(id) {
   return MATERIALS.find(m => m.id === id);
 }
@@ -120,6 +146,24 @@ export function compute(save, now = Date.now()) {
   const goodDays = new Set();
   const lastBad = {};       // id привычки -> время последнего срыва
   const runs = {};          // id действия -> { last: номер дня, len: дней подряд, best }
+  const subStats = {};      // id подветви -> статистика
+  const subDay = {};        // "день|подветвь" -> минут за день
+  for (const sb of save.custom.subs) {
+    if (!sp[sb.sphere]) continue;
+    subStats[sb.id] = {
+      id: sb.id, sphere: sb.sphere, name: sb.name, archived: Boolean(sb.archived), order: sb.order ?? 0,
+      xp: 0, xp7: 0, xp30: 0, minutes: 0, minutes7: 0, minutes30: 0, sessions: 0, last: null,
+    };
+  }
+  const addToSub = (sid, xp, minutes, t) => {
+    const st = subStats[sid];
+    if (!st) return;
+    const age = now - t;
+    st.xp += xp; st.minutes += minutes; st.sessions++;
+    if (age < 7 * DAY) { st.xp7 += xp; st.minutes7 += minutes; }
+    if (age < 30 * DAY) { st.xp30 += xp; st.minutes30 += minutes; }
+    st.last = Math.max(st.last || 0, t);
+  };
 
   const events = [...save.events].sort((a, b) => a.t - b.t);
 
@@ -147,6 +191,23 @@ export function compute(save, now = Date.now()) {
     return gained;
   };
 
+  // Огонёк: первое выполнение за день продлевает серию (для дел и подветвей).
+  const bumpRun = (key, t, s, sphereId, eff) => {
+    const d = dayNum(t);
+    const r = runs[key] || (runs[key] = { last: null, len: 0, best: 0 });
+    if (r.last === d) return;
+    r.len = r.last === d - 1 ? r.len + 1 : 1;
+    r.last = d;
+    r.best = Math.max(r.best, r.len);
+    const bonus = STREAK_MILESTONES[r.len];
+    if (bonus) {
+      const extra = Math.round(bonus * growthFactor(s));
+      s.xp += extra;
+      eff.gains[sphereId] = (eff.gains[sphereId] || 0) + extra;
+      eff.streak = { days: r.len, bonus: extra };
+    }
+  };
+
   for (const e of events) {
     for (const s of Object.values(sp)) applyDecay(s, e.t);
     const eff = { gains: {}, losses: {}, valid: false };
@@ -162,21 +223,29 @@ export function compute(save, now = Date.now()) {
       const s = sp[a.sphere];
       eff.gains[a.sphere] = gainXp(s, a.xp * f, e.t);
       eff.repeat = n;
-      // Огонёк: первое выполнение за день продлевает серию.
-      const d = dayNum(e.t);
-      const r = runs[a.id] || (runs[a.id] = { last: null, len: 0, best: 0 });
-      if (r.last !== d) {
-        r.len = r.last === d - 1 ? r.len + 1 : 1;
-        r.last = d;
-        r.best = Math.max(r.best, r.len);
-        const bonus = STREAK_MILESTONES[r.len];
-        if (bonus) {
-          const extra = Math.round(bonus * growthFactor(s));
-          s.xp += extra;
-          eff.gains[a.sphere] += extra;
-          eff.streak = { days: r.len, bonus: extra };
-        }
+      bumpRun(a.id, e.t, s, a.sphere, eff);
+      if (a.sub && subStats[a.sub]) {
+        addToSub(a.sub, eff.gains[a.sphere], 0, e.t);
+        eff.sub = a.sub;
       }
+      s.actions++;
+      goodDays.add(dayKey(e.t));
+      eff.valid = true;
+    } else if (e.k === 'time') {
+      // Время, потраченное на подветвь (например, на предмет в вузе).
+      const sb = findSub(save, e.ref);
+      const minutes = Math.round(Number(e.m) || 0);
+      if (!sb || !sp[sb.sphere] || minutes <= 0) continue;
+      const s = sp[sb.sphere];
+      const key = dayKey(e.t) + '|' + sb.id;
+      const today = subDay[key] || 0;
+      subDay[key] = today + minutes;
+      eff.gains[sb.sphere] = gainXp(s, minutesToXp(minutes, today), e.t);
+      eff.over = today + minutes > SUB_RULES.dailyFullMinutes;
+      bumpRun(sb.id, e.t, s, sb.sphere, eff);
+      addToSub(sb.id, eff.gains[sb.sphere], minutes, e.t);
+      eff.sub = sb.id;
+      eff.minutes = minutes;
       s.actions++;
       goodDays.add(dayKey(e.t));
       eff.valid = true;
@@ -222,6 +291,17 @@ export function compute(save, now = Date.now()) {
     s.health = Math.round(s.health);
     s.idleDays = s.lastActive ? Math.floor((now - s.lastActive) / DAY) : null;
     totalXp += s.xp;
+    // Подветви этой ветви (без удалённых), в порядке добавления.
+    s.subList = Object.values(subStats)
+      .filter(x => x.sphere === s.id && !x.archived)
+      .sort((a, b) => a.order - b.order)
+      .map(x => ({
+        ...x,
+        ...levelInfo(x.xp, SUB_RULES.xpBase),
+        idleDays: x.last ? Math.floor((now - x.last) / DAY) : null,
+      }));
+    const subXp = s.subList.reduce((a, x) => a + x.xp, 0);
+    s.generalXp = Math.max(0, s.xp - subXp);
   }
   const player = levelInfo(totalXp, RULES.playerXpBase);
 
@@ -257,7 +337,7 @@ export function compute(save, now = Date.now()) {
 
   return {
     spheres: sp, totalXp, player, stage: stageFor(player.level), streak,
-    effects, cleanDays, learned, dayCounts, todayCounts, avgHealth, streaks,
+    effects, cleanDays, learned, dayCounts, todayCounts, avgHealth, streaks, subStats,
   };
 }
 

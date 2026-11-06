@@ -45,6 +45,7 @@ export function mergeSaves(a, b) {
     custom: {
       acts: byId(a.custom?.acts, b.custom?.acts),
       bads: byId(a.custom?.bads, b.custom?.bads),
+      subs: byId(a.custom?.subs, b.custom?.subs),
     },
     tracked: newer.tracked || [],
   };
