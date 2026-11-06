@@ -6,9 +6,13 @@
   "type": "module",
   "scripts": {
     "dev": "node dev-server.js",
-    "start": "node dev-server.js"
+    "start": "node dev-server.js",
+    "build": "node build.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
   }
 }

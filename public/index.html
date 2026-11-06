@@ -55,6 +55,40 @@
   <div id="sheet" class="sheet" hidden></div>
   <div id="toasts" class="toasts" aria-live="polite"></div>
 
-  <script type="module" src="/js/app.js"></script>
+  <script>
+    // Загрузчик. Современные браузеры получают js/app.js, старые (например,
+    // встроенный браузер Telegram на старом планшете) — совместимую версию.
+    // Если игра не запустилась, вместо пустого экрана показываем причину.
+    (function () {
+      var ru = /^(ru|uk|be|kk)/i.test(navigator.language || '');
+      try { var saved = localStorage.getItem('tol_lang'); if (saved) ru = saved === 'ru'; } catch (e) {}
+      window.__bootFail = function (reason, detail) {
+        if (window.__appStarted || window.__bootShown) return;
+        window.__bootShown = true;
+        var box = document.getElementById('loading');
+        if (!box) return;
+        box.hidden = false;
+        box.innerHTML =
+          '<p class="error-text">' + (ru
+            ? 'Не удалось запустить игру. Возможные причины: нет интернета, сайт заблокирован у провайдера (попробуйте VPN) или устарел встроенный браузер — обновите Telegram и «Android System WebView» в Play Маркете.'
+            : 'The game could not start. Possible reasons: no internet, the site is blocked by your provider (try a VPN), or the built-in browser is outdated — update Telegram and “Android System WebView” in the Play Store.') + '</p>' +
+          '<button class="btn" onclick="location.reload()">' + (ru ? 'Попробовать снова' : 'Try again') + '</button>' +
+          '<p class="boot-details">' + reason + (detail ? ': ' + String(detail).slice(0, 160) : '') + '<br>' + navigator.userAgent + '</p>';
+      };
+      window.addEventListener('error', function (e) { window.__bootFail('error', e.message); });
+      setTimeout(function () { window.__bootFail('timeout'); }, 20000);
+
+      var modern = false;
+      try {
+        new Function('var a = {}; return a?.b ?? 1')();
+        modern = 'noModule' in document.createElement('script');
+      } catch (e) { modern = false; }
+      if (/[?&]legacy=1/.test(location.search)) modern = false;
+      var s = document.createElement('script');
+      if (modern) { s.type = 'module'; s.src = '/js/app.js'; } else { s.src = '/js/app.legacy.js'; }
+      s.onerror = function () { window.__bootFail('load', s.src); };
+      document.body.appendChild(s);
+    })();
+  </script>
 </body>
 </html>

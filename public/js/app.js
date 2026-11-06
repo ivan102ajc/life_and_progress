@@ -45,6 +45,7 @@ const MOODS = ['😞', '😕', '😐', '🙂', '😄'];
 // ---------------------------------------------------------------------------
 
 async function start() {
+  window.__appStarted = true; // загрузчик в index.html больше не покажет экран ошибки
   applyTheme(THEME_BY_ID.spring);
   bindEvents();
 
