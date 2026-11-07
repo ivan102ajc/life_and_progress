@@ -22,18 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Позвать сервер разослать напоминания
-        env:
-          CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
-          # Секрет ещё не задан — просто пропускаем, без ошибки и без письма.
-          if [ -z "$CRON_SECRET" ]; then
-            echo "CRON_SECRET не задан — пропускаю. Добавь его в Settings → Secrets репозитория и в Vercel, и напоминания заработают."
-            exit 0
-          fi
-          code=$(curl -s -o /tmp/out -w "%{http_code}" -X GET \
-            "https://life-and-progress.vercel.app/api/admin?task=remind" \
-            -H "Authorization: Bearer $CRON_SECRET")
-          echo "HTTP $code"; cat /tmp/out; echo
-          # Падаем (и шлём письмо) только если сервер ответил не 200 —
-          # это уже настоящая проблема, которую стоит заметить.
-          test "$code" = "200"
+          curl -fsS -X GET "https://life-and-progress.vercel.app/api/admin?task=remind" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            && echo "" && echo "OK"
