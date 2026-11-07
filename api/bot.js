@@ -14,6 +14,16 @@ import { linkTelegram, maskEmail } from '../lib/link.js';
 import { isAdmin, adminIds, computeStats } from '../lib/admin.js';
 
 const fmtDate = (ms) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
+const fmtDay = (ms) => (ms ? new Date(ms).toISOString().slice(0, 10) : '—');
+
+// Сколько дней назад была последняя отметка игрока (по журналу событий).
+function lastActive(data) {
+  const events = Array.isArray(data?.events) ? data.events : [];
+  const last = events.reduce((m, e) => Math.max(m, e.c || 0, e.t || 0), 0);
+  if (!last) return 'нет отметок';
+  const days = Math.floor((Date.now() - last) / (24 * 60 * 60 * 1000));
+  return days <= 0 ? 'сегодня' : days === 1 ? 'вчера' : `${days} дн. назад`;
+}
 
 // Команды разработчика. Возвращает текст ответа или null, если это не команда админа.
 async function adminCommand(msg, text) {
@@ -24,6 +34,18 @@ async function adminCommand(msg, text) {
     if (!list.length) return '✅ За неделю ошибок не было.';
     return '⚠️ Частые ошибки за неделю:\n\n' + list.map(e =>
       `×${e.count} · ${e.message}${e.source ? `\n📍 ${e.source}` : ''}\n🕒 последняя ${fmtDate(e.lastAt)} UTC`).join('\n\n');
+  }
+  if (/^\/users\b/.test(text)) {
+    const [list, states] = await Promise.all([db.listRecentUsers(15), db.listStates()]);
+    if (!list.length) return 'Пока никто не зарегистрировался.';
+    const byUser = new Map(states.map(s => [s.userId, s.data || {}]));
+    const total = await db.countUsers();
+    const lines = list.map(u => {
+      const who = u.email ? maskEmail(u.email) : (u.tgId ? 'Telegram' : '—');
+      return `• ${u.name || 'без имени'} · ${who}\n  рег. ${fmtDay(u.createdAt)} · заходил: ${lastActive(byUser.get(u.id))}`;
+    });
+    return `👥 Игроков всего: ${total}\nПоследние ${list.length}:\n\n${lines.join('\n')}` +
+      '\n\nПочта скрыта, пароли и дневники не показываются.';
   }
   if (/^\/feedback\b/.test(text)) {
     const list = await db.listFeedback(8);
@@ -126,6 +148,7 @@ export default handle(async (req, res) => {
         scope: { type: 'chat', chat_id: Number(id) },
         commands: [
           { command: 'stats', description: 'Статистика игры' },
+          { command: 'users', description: 'Последние игроки' },
           { command: 'errors', description: 'Частые ошибки' },
           { command: 'feedback', description: 'Последние отзывы' },
           { command: 'start', description: 'Открыть Древо жизни' },
