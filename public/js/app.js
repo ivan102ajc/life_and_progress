@@ -4,7 +4,7 @@ import { SPHERES, SPHERE_BY_ID, SKILLS, SKILL_BY_ID, MATERIALS, RULES } from './
 import {
   newSave, normalizeSave, compute, uid, allActions, allBadHabits, findAction, findBad,
   findMaterial, countOnDay, skillStatus, dependentSkills, dayKey,
-  findSub, subsOf, SUB_RULES,
+  findSub, subsOf, SUB_RULES, linkedAction, guessAction,
   STREAK_MILESTONES, nextMilestone,
 } from './game.js';
 import { THEMES, THEME_BY_ID, applyTheme } from './themes.js';
@@ -360,6 +360,9 @@ function reportChange(before, after, e) {
     toast(T(`+${xp} опыта: ${where}${note}`, `+${xp} XP: ${where}${note}`), 'good');
     const lb = before.spheres[sid].level; const la = after.spheres[sid].level;
     if (la > lb) toast(T(`Ветвь «${nm(sp)}» выросла до уровня ${la}`, `The ${nm(sp)} branch grew to level ${la}`), 'level');
+  }
+  if (eff.act) {
+    toast(T(`✓ Засчитано дело «${nm(findAction(ui.save, eff.act))}»`, `✓ Counted as “${nm(findAction(ui.save, eff.act))}”`), 'info');
   }
   const losses = Object.entries(eff.losses);
   if (losses.length) {
@@ -757,6 +760,7 @@ function panelHistory(st) {
     const fx = [
       ...Object.entries(eff.gains).map(([sid, v]) => `<span class="fx-good">+${v} ${nm(SPHERE_BY_ID[sid])}</span>`),
       ...Object.entries(eff.losses).map(([sid, v]) => `<span class="fx-bad">−${v} ${T('сила', 'vitality')}: ${nm(SPHERE_BY_ID[sid])}</span>`),
+      ...(eff.act ? [`<span class="fx-act">✓ ${esc(nm(findAction(ui.save, eff.act)))}</span>`] : []),
     ].join(' ') || `<span class="muted">${T('не засчитано', 'didn’t count')}</span>`;
     const note = hasNote(e)
       ? `<button class="hist-note" data-action="note" data-id="${e.id}">${e.mood ? MOODS[e.mood - 1] + ' ' : ''}${esc((e.note || '').slice(0, 140))}${(e.note || '').length > 140 ? '…' : ''}</button>`
@@ -1106,8 +1110,9 @@ function panelBranch(st) {
     return `
       <div class="sub-row" style="--c:${subColor(sp.color, i)}">
         <button class="sub-main" data-action="sub-menu" data-id="${sb.id}">
-          <span class="sub-top"><strong>${esc(sb.name)}</strong>${flameChip(st, sb.id)}<span class="sub-lvl">${T('ур.', 'lv')} ${sb.level}</span></span>
+          <span class="sub-top"><strong>${esc(sb.name)}</strong>${flameChip(st, linkedAction(ui.save, findSub(ui.save, sb.id)) || sb.id)}<span class="sub-lvl">${T('ур.', 'lv')} ${sb.level}</span></span>
           <span class="bar"><i style="width:${Math.round(v / max * 100)}%"></i></span>
+          ${linkLine(sb.id)}
           <span class="sub-meta">${formatMinutes(minutesP)} ${periodName} · ${T(`${sb.xp} опыта всего`, `${sb.xp} XP total`)} · <span class="${warn ? 'warn' : ''}">${idle}</span></span>
         </button>
         <button class="btn btn-small btn-primary" data-action="log-time" data-id="${sb.id}" aria-label="${T('Отметить время', 'Log time')}: ${esc(sb.name)}">+ ${T('время', 'time')}</button>
@@ -1182,6 +1187,7 @@ function openAddSub(sphereId) {
     <form id="sheet-form" novalidate>
       <label class="field"><span>${T('Название', 'Name')}</span><input name="name" maxlength="30" required placeholder="${T('Например', 'For example')}: ${esc(ideas[0] || T('Матанализ', 'Calculus'))}"></label>
       ${ideas.length ? `<div class="chips wrap">${ideas.map(x => `<button type="button" class="chip" data-action="fill-sub" data-name="${esc(x)}">${esc(x)}</button>`).join('')}</div>` : ''}
+      ${linkSelect(sphereId, null, true)}
       <p class="form-error" role="alert"></p>
       <div class="sheet-actions">
         <button type="button" class="btn btn-ghost" data-action="close-sheet">${T('Отмена', 'Cancel')}</button>
@@ -1194,7 +1200,10 @@ function openAddSub(sphereId) {
     if (taken.has(name.toLowerCase())) { err.textContent = T('Такая подветвь уже есть', 'That sub-branch already exists'); return false; }
     const order = Math.max(-1, ...ui.save.custom.subs.filter(x => x.sphere === sphereId).map(x => x.order ?? 0)) + 1;
     const id = 'sb_' + uid();
-    ui.save.custom.subs.push({ id, sphere: sphereId, name, order, createdAt: Date.now() });
+    const sub = { id, sphere: sphereId, name, order, createdAt: Date.now() };
+    const link = String(fd.get('act') || 'auto');
+    if (link !== 'auto') sub.act = link === 'none' ? null : link; // иначе — угадываем по названию
+    ui.save.custom.subs.push(sub);
     commit();
     toast(T(`Подветвь «${name}» проросла`, `Sub-branch “${name}” has sprouted`), 'good');
     haptic('success');
@@ -1243,6 +1252,32 @@ function subNotes(subId) {
     </button>`).join('')}</div>`;
 }
 
+// Подпись «↳ засчитывается как …» под названием подветви.
+function linkLine(subId) {
+  const actId = linkedAction(ui.save, findSub(ui.save, subId));
+  if (!actId) return '';
+  return `<span class="sub-link">↳ ${T('засчитывается как', 'counts as')} «${esc(nm(findAction(ui.save, actId)))}»</span>`;
+}
+
+// Выбор дела, которое засчитывается при отметке времени на подветвь.
+function linkSelect(sphereId, sb, fresh) {
+  const acts = allActions(ui.save).filter(a => a.sphere === sphereId && !a.sub);
+  const explicit = sb && Object.prototype.hasOwnProperty.call(sb, 'act');
+  const current = explicit ? (sb.act || 'none') : 'auto';
+  const guess = sb ? guessAction(sb.name, sphereId) : null;
+  const autoLabel = fresh
+    ? T('Определить по названию', 'Pick by name')
+    : guess ? T(`Автоматически: «${nm(findAction(ui.save, guess))}»`, `Automatic: “${nm(findAction(ui.save, guess))}”`) : T('Автоматически: не найдено', 'Automatic: none found');
+  return `<label class="field"><span>${T('Засчитывать как дело', 'Count as activity')}</span>
+    <select name="act">
+      <option value="auto"${current === 'auto' ? ' selected' : ''}>${autoLabel}</option>
+      ${acts.map(a => `<option value="${a.id}"${current === a.id ? ' selected' : ''}>${esc(nm(a))}</option>`).join('')}
+      <option value="none"${current === 'none' ? ' selected' : ''}>${T('Не засчитывать', 'Don’t count')}</option>
+    </select>
+    <small class="field-hint">${T('Отметил время на подветвь — это дело тоже отметится за день и продлит свой огонёк.', 'Log time on the sub-branch and this activity is marked done for the day too, keeping its streak going.')}</small>
+  </label>`;
+}
+
 function openSubMenu(subId) {
   const sb = findSub(ui.save, subId);
   if (!sb) return;
@@ -1254,10 +1289,11 @@ function openSubMenu(subId) {
     ${subNotes(sb.id)}
     <form id="sheet-form" novalidate>
       <label class="field"><span>${T('Название', 'Name')}</span><input name="name" maxlength="30" value="${esc(sb.name)}"></label>
+      ${linkSelect(sb.sphere, sb, false)}
       <p class="form-error" role="alert"></p>
       <div class="sheet-actions stack">
         <button type="button" class="btn btn-primary" data-action="log-time" data-id="${sb.id}">${T('Отметить время', 'Log time')}</button>
-        <button class="btn btn-ghost" type="submit">${T('Сохранить название', 'Save name')}</button>
+        <button class="btn btn-ghost" type="submit">${T('Сохранить', 'Save')}</button>
         <button type="button" class="btn btn-ghost" data-action="delete-sub" data-id="${sb.id}">${T('Удалить подветвь', 'Delete sub-branch')}</button>
         <button type="button" class="btn btn-ghost" data-action="close-sheet">${T('Закрыть', 'Close')}</button>
       </div>
@@ -1268,8 +1304,10 @@ function openSubMenu(subId) {
       $('#sheet .form-error').textContent = T('Такая подветвь уже есть', 'That sub-branch already exists'); return false;
     }
     sb.name = name;
+    const link = String(fd.get('act') || 'auto');
+    if (link === 'auto') delete sb.act; else sb.act = link === 'none' ? null : link;
     commit();
-    toast(T('Название сохранено', 'Name saved'), 'info');
+    toast(T('Сохранено', 'Saved'), 'info');
   });
 }
 

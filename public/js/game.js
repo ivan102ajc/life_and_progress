@@ -82,6 +82,54 @@ export const SUB_RULES = {
   neglectDays: 7,       // через сколько дней подветвь начинает желтеть
 };
 
+// С каким делом связана подветвь: время на «Английский» засчитывается как
+// «Занимался иностранным языком». Игрок может выбрать связь сам (sb.act —
+// id дела или null, «не связывать»); если не выбирал — угадываем по названию.
+const LINK_RULES = [
+  [/англ|немец|франц|испан|итал|китай|япон|корей|язык|english|german|french|spanish|italian|chinese|japanese|korean|language/i, 'm_lang'],
+  [/чтен|книг|читал|reading|book/i, 'm_read'],
+  [/лекци|lecture|podcast|подкаст/i, 'm_lecture'],
+  [/задач|олимпиад|практик|leetcode|problem/i, 'm_tasks'],
+  [/матем|матан|алгебр|геометр|физик|хими|биолог|истор|географ|литерат|философ|эконом|право|информат|программ|предмет|учёб|учеб|курс|maths?|algebra|geometry|physics|chemistry|biology|history|geography|literature|philosophy|economics|law|programming|coding|course|study/i, 'm_study'],
+  [/бег|зал|тренир|плаван|йог|велос|футбол|баскет|волейбол|теннис|бокс|единоборств|фитнес|лыж|танц|running|gym|workout|swim|yoga|cycl|football|soccer|basketball|volleyball|tennis|boxing|fitness|ski|danc/i, 'h_train'],
+  [/прогул|ходьб|шаг|walk|steps/i, 'h_walk'],
+  [/растяж|заряд|stretch/i, 'h_stretch'],
+  [/сон|sleep/i, 'h_sleep'],
+  [/портфолио|резюме|portfolio|cv|resume/i, 'c_cv'],
+  [/проект|работ|профес|стажир|подработ|project|job|work|intern/i, 'c_deep'],
+  [/бюджет|расход|budget|expens/i, 'f_track'],
+  [/накоплен|копил|сбереж|saving/i, 'f_save'],
+  [/инвест|финанс|invest|financ/i, 'f_learn'],
+  [/семь|родн|мама|папа|family|parents/i, 's_family'],
+  [/друз|friend/i, 's_friends'],
+  [/знаком|meeting people|dating/i, 's_new'],
+  [/рисов|живоп|музык|гитар|пиани|фото|видео|творч|drawing|paint|music|guitar|piano|photo|video|art/i, 'a_practice'],
+  [/писат|текст|блог|writing|blog/i, 'a_write'],
+  [/медит|meditat/i, 'p_meditate'],
+  [/дневник|journal/i, 'p_journal'],
+  [/природ|nature|hik|поход/i, 'p_nature'],
+  [/готов|кулин|cook/i, 'd_cook'],
+  [/уборк|чистот|clean|tidy/i, 'd_clean'],
+  [/ремонт|repair|diy/i, 'd_todo'],
+];
+
+export function guessAction(name, sphereId) {
+  const text = String(name || '');
+  for (const [re, actId] of LINK_RULES) {
+    const a = ACTIONS.find(x => x.id === actId);
+    if (a && a.sphere === sphereId && re.test(text)) return actId;
+  }
+  return null;
+}
+
+export function linkedAction(save, sb) {
+  if (!sb) return null;
+  if (Object.prototype.hasOwnProperty.call(sb, 'act')) {
+    return sb.act && findAction(save, sb.act) ? sb.act : null;
+  }
+  return guessAction(sb.name, sb.sphere);
+}
+
 export function minutesToXp(minutes, alreadyToday) {
   const full = Math.max(0, Math.min(minutes, SUB_RULES.dailyFullMinutes - alreadyToday));
   const over = minutes - full;
@@ -194,14 +242,14 @@ export function compute(save, now = Date.now()) {
   };
 
   // Огонёк: первое выполнение за день продлевает серию (для дел и подветвей).
-  const bumpRun = (key, t, s, sphereId, eff) => {
+  const bumpRun = (key, t, s, sphereId, eff, withBonus = true) => {
     const d = dayNum(t);
     const r = runs[key] || (runs[key] = { last: null, len: 0, best: 0 });
     if (r.last === d) return;
     r.len = r.last === d - 1 ? r.len + 1 : 1;
     r.last = d;
     r.best = Math.max(r.best, r.len);
-    const bonus = STREAK_MILESTONES[r.len];
+    const bonus = withBonus && STREAK_MILESTONES[r.len];
     if (bonus) {
       const extra = Math.round(bonus * growthFactor(s));
       s.xp += extra;
@@ -209,6 +257,16 @@ export function compute(save, now = Date.now()) {
       eff.streak = { days: r.len, bonus: extra };
     }
   };
+
+  // Связи подветвей с делами: id дела -> подветви, которые его засчитывают.
+  const subLink = {};
+  const actSubs = {};
+  for (const sb of save.custom.subs) {
+    if (sb.archived) continue;
+    const actId = linkedAction(save, sb);
+    subLink[sb.id] = actId;
+    if (actId) (actSubs[actId] = actSubs[actId] || []).push(sb.id);
+  }
 
   for (const e of events) {
     for (const s of Object.values(sp)) applyDecay(s, e.t);
@@ -226,9 +284,12 @@ export function compute(save, now = Date.now()) {
       eff.gains[a.sphere] = gainXp(s, a.xp * f, e.t);
       eff.repeat = n;
       bumpRun(a.id, e.t, s, a.sphere, eff);
-      if (a.sub && subStats[a.sub]) {
-        addToSub(a.sub, eff.gains[a.sphere], 0, e.t);
-        eff.sub = a.sub;
+      // Дело относится к подветви: своё дело с выбранной подветвью или
+      // стандартное дело, с которым связана ровно одна подветвь.
+      const subId = a.sub || (actSubs[a.id]?.length === 1 ? actSubs[a.id][0] : null);
+      if (subId && subStats[subId]) {
+        addToSub(subId, eff.gains[a.sphere], 0, e.t);
+        eff.sub = subId;
       }
       s.actions++;
       goodDays.add(dayKey(e.t));
@@ -244,7 +305,17 @@ export function compute(save, now = Date.now()) {
       subDay[key] = today + minutes;
       eff.gains[sb.sphere] = gainXp(s, minutesToXp(minutes, today), e.t);
       eff.over = today + minutes > SUB_RULES.dailyFullMinutes;
-      bumpRun(sb.id, e.t, s, sb.sphere, eff);
+      // Время на подветвь засчитывается и как связанное дело: оно отмечено
+      // за этот день и продлевает огонёк дела. Опыт второй раз не начисляется,
+      // а если потом отметить это же дело вручную — оно будет повтором за день.
+      const linked = subLink[sb.id] ?? linkedAction(save, sb);
+      if (linked) {
+        const akey = dayKey(e.t) + '|' + linked;
+        dayCounts[akey] = (dayCounts[akey] || 0) + 1;
+        bumpRun(linked, e.t, s, sb.sphere, eff);
+        eff.act = linked;
+      }
+      bumpRun(sb.id, e.t, s, sb.sphere, eff, !linked);
       addToSub(sb.id, eff.gains[sb.sphere], minutes, e.t);
       eff.sub = sb.id;
       eff.minutes = minutes;

@@ -17,6 +17,7 @@ export const FEATURES = [
   { id: 'notes', title: ['Заметки к делам и дневник', 'Notes on activities and a journal'] },
   { id: 'accounts', title: ['Один аккаунт на сайте и в Telegram', 'One account on the website and in Telegram'] },
   { id: 'language', title: ['Английский язык', 'English language'] },
+  { id: 'sublink', title: ['Время на подветвь засчитывает дело', 'Sub-branch time counts as an activity'] },
 ];
 
 // nav — какой экран открыть перед шагом; target — что подсветить
@@ -75,6 +76,10 @@ export const STEPS = [
     title: ['Настройки и аккаунт', 'Settings and account'],
     text: ['Здесь стиль игры (их пять — от весеннего сада до пикселей) и аккаунт: привяжи Telegram, и на сайте и в Telegram будет одно дерево. Обучение тоже можно пройти заново отсюда.',
       'Here you’ll find the game style (five of them, from spring garden to pixel) and your account: link Telegram to have one tree on the website and in Telegram. You can replay the tutorial from here too.'] },
+  { feature: 'sublink', nav: { tab: 'tree', zoom: 'mind' }, target: '#panel .sub-row, #panel [data-action="add-sub"]',
+    title: ['Подветвь засчитывает дело', 'Sub-branches count activities'],
+    text: ['Отметил 20 минут на «Английский» — дело «Занимался иностранным языком» тоже засчитается за день и продлит свой огонёк. Связь подбирается по названию, а поменять её можно в меню подветви.',
+      'Log 20 minutes on “Spanish” and “Practised a foreign language” is counted for the day too, keeping its streak going. The link is picked from the name; change it in the sub-branch menu.'] },
   { feature: 'language', nav: { tab: 'tree' }, target: '[data-action="settings"]',
     title: ['Русский или английский', 'Russian or English'],
     text: ['Язык игры можно сменить в настройках. Выбор сохраняется в аккаунте — на всех устройствах.',

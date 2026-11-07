@@ -230,10 +230,18 @@ export function renderTree(state, theme, { selected = null, reduceMotion = false
 
     if (!s.started) {
       // Ветвь ещё не проросла — на стволе только почка.
+      // Значки почек расходятся веером вокруг верхушки ствола, чтобы на
+      // молодом дереве их было легко нажать пальцем; к каждому ведёт росток.
+      const top = trunkCurve[3];
+      const R = 96;
+      const lx = top[0] + Math.sin(a) * R;
+      const ly = top[1] - Math.cos(a) * R * 0.82 + 10;
+      const sproutColor = mix(T.trunk, leafPalette[0], .45);
+      const mid = [bx + (lx - bx) * .45, by + (ly - by) * .45 - 8];
+      g1 += ribbon([[bx, by], mid, mid, [lx, ly]], 2.4, 1, 10, { fill: sproutColor, pixel, extra: ' opacity=".55"' });
       const dx = Math.sin(a) * 9; const dy = -Math.cos(a) * 9;
       g1 += leafShape(pixel ? 'square' : 'leaf', 9, mix(leafPalette[0], T.sky[1], .35), bx + dx, by + dy, ANGLES[i], pixel);
-      const lx = bx + Math.sin(a) * 30; const ly = by - Math.cos(a) * 30;
-      tags.push(`<g class="branch tag-wrap" data-sphere="${sphere.id}">${label(sphere, lx, ly, isSel, true, pixel)}<circle cx="${r1(lx)}" cy="${r1(ly)}" r="22" fill="transparent"/></g>`);
+      tags.push(`<g class="branch tag-wrap" data-sphere="${sphere.id}">${label(sphere, lx, ly, isSel, true, pixel)}<circle cx="${r1(lx)}" cy="${r1(ly)}" r="17" fill="transparent"/></g>`);
       branches.push(`<g class="branch is-bud${isSel ? ' is-selected' : ''}" data-sphere="${sphere.id}" tabindex="0" role="button" aria-label="${nm(sphere)}: ${tt('ещё не проросла', 'not sprouted yet')}">${g1}</g>`);
       return;
     }
