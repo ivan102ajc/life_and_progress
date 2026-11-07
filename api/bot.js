@@ -156,7 +156,9 @@ export default handle(async (req, res) => {
     const from = msg.from;
     const button = { reply_markup: { inline_keyboard: [[{ text: L(from, '🌳 Открыть моё дерево', '🌳 Open my tree'), web_app: { url } }]] } };
     const payload = text.startsWith('/start ') ? text.slice(7).trim() : '';
-    const adminReply = msg.from?.id && isAdmin(msg.from.id) ? await adminCommand(msg, text) : null;
+    // Команды разработчика работают только в личном чате с ботом: если бота
+    // добавят в группу, статистика и отзывы там не появятся.
+    const adminReply = msg.chat.type === 'private' && msg.from?.id && isAdmin(msg.from.id) ? await adminCommand(msg, text) : null;
     if (adminReply) {
       await tg('sendMessage', { chat_id: msg.chat.id, text: adminReply.slice(0, 4000), disable_web_page_preview: true });
     } else if (/^\/myid\b/.test(text)) {
