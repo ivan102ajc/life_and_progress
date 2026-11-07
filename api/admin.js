@@ -17,10 +17,8 @@ export default handle(async (req, res) => {
   const db = await getDb();
 
   if (task === 'remind') {
-    // Не больше одной рассылки напоминаний в сутки, даже если запрос повторится.
-    const today = new Date().toISOString().slice(0, 10);
-    if ((await db.getMeta('last_remind_day')) === today) return send(res, 200, { ok: true, skipped: 'already sent' });
-    await db.setMeta('last_remind_day', today);
+    // Запускается раз в час. Кому слать сейчас — решает sendReminders
+    // по часовому поясу каждого игрока; повторы отсекаются на уровне игрока.
     const result = await sendReminders(db);
     return send(res, 200, { ok: true, ...result });
   }

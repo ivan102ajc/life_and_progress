@@ -92,8 +92,8 @@ export const STEPS = [
       'Found a bug or have an idea? Settings → “Help” has a “Message the developer” button. If Telegram is linked, the reply comes from the game bot. The privacy policy and account deletion are there too.'] },
   { feature: 'reminders', nav: { tab: 'tree' }, target: '[data-action="settings"]',
     title: ['Бот напомнит зайти', 'The bot will remind you'],
-    text: ['Если привязан Telegram, бот раз в день напомнит заглянуть в игру и отметить дело. Не хочешь — в настройках есть кнопка «Не напоминать 2 недели», и та же кнопка есть прямо под напоминанием.',
-      'If Telegram is linked, the bot reminds you once a day to drop in and log something. Don’t want that? Settings has a “Mute for 2 weeks” button, and so does the reminder itself.'] },
+    text: ['Если привязан Telegram, бот раз в день напомнит заглянуть в игру — по умолчанию в 20:00 по твоему времени, а час можно поменять в настройках → «Напоминания». Не хочешь — там же (и прямо под напоминанием) есть «Не напоминать 2 недели».',
+      'If Telegram is linked, the bot reminds you once a day to drop in — by default at 20:00 your local time, and you can change the hour in Settings → “Reminders”. Don’t want it? The same place (and the reminder itself) has “Mute for 2 weeks”.'] },
 ];
 
 const pick = (v) => (Array.isArray(v) ? T(v[0], v[1]) : v);

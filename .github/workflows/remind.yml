@@ -1,0 +1,28 @@
+# Ежечасный запуск напоминаний игрокам.
+# Бесплатный тариф Vercel умеет запускать задачи только раз в сутки, поэтому
+# ежечасный «будильник» живёт здесь, в GitHub Actions (это бесплатно).
+# Каждый час этот workflow дёргает наш адрес /api/admin?task=remind, а сервер
+# сам решает, кому именно сейчас пора напомнить — по часовому поясу игрока.
+#
+# Что нужно один раз настроить:
+#   Settings → Secrets and variables → Actions → New repository secret
+#     Name:  CRON_SECRET
+#     Value: та же длинная случайная строка, что добавлена в Vercel
+#            (Settings → Environment Variables → CRON_SECRET).
+
+name: Напоминания игрокам
+
+on:
+  schedule:
+    - cron: '0 * * * *'   # каждый час
+  workflow_dispatch:       # и можно запустить вручную кнопкой
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Позвать сервер разослать напоминания
+        run: |
+          curl -fsS -X GET "https://life-and-progress.vercel.app/api/admin?task=remind" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            && echo "" && echo "OK"

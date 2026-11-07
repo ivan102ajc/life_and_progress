@@ -145,6 +145,7 @@ async function loadGame() {
     showScreen('game');
     render();
     maybeStartTour();
+    syncTz();
   } catch (err) {
     if (err.status === 401) {
       auth.token = null;
@@ -1435,6 +1436,22 @@ function accountBlock() {
     <p class="small muted">${T('Связанные вход по почте и Telegram — это один аккаунт: отметил дело на телефоне — увидишь его на компьютере. При объединении прогресс складывается, ничего не теряется.', 'Linked email login and Telegram are one account: log on your phone, see it on your computer. Merging adds the progress together — nothing is lost.')}</p>`;
 }
 
+// Часовой пояс этого устройства (например, "Europe/Moscow").
+function browserTz() {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch { return null; }
+}
+
+// Тихо сообщаем серверу часовой пояс игрока, чтобы напоминания приходили
+// по его местному времени. Шлём только когда он изменился.
+async function syncTz() {
+  const tz = browserTz();
+  if (!ui.user || !tz || ui.user.tz === tz) return;
+  try {
+    const res = await api.reminders({ tz });
+    if (res.user) ui.user = res.user;
+  } catch { /* не критично */ }
+}
+
 // Управление ежедневными напоминаниями бота (только если привязан Telegram).
 function remindRow() {
   const u = ui.user;
@@ -1444,10 +1461,17 @@ function remindRow() {
   }
   const off = (u.remindOff || 0) > Date.now();
   const until = off ? new Date(u.remindOff).toLocaleDateString(T('ru-RU', 'en-US')) : '';
+  const hour = u.remindHour == null ? 20 : u.remindHour;
+  const hourOptions = Array.from({ length: 24 }, (_, h) =>
+    `<option value="${h}"${h === hour ? ' selected' : ''}>${String(h).padStart(2, '0')}:00</option>`).join('');
+  const timePicker = off ? '' : `
+    <label class="field"><span>${T('Во сколько напоминать (по твоему времени)', 'When to remind you (your local time)')}</span>
+      <select data-change="remind-hour">${hourOptions}</select></label>`;
   return `<h3>${T('Напоминания', 'Reminders')}</h3>
     <p class="small muted">${off
       ? T(`Напоминания выключены до ${until}.`, `Reminders are off until ${until}.`)
       : T('Бот раз в день напоминает зайти в игру, если ты ещё не заходил в этот день.', 'The bot reminds you once a day to drop in, unless you’ve already been in that day.')}</p>
+    ${timePicker}
     <button class="btn btn-ghost btn-wide" data-action="${off ? 'remind-on' : 'remind-off'}">${off
       ? T('Включить напоминания', 'Turn reminders on')
       : T('🔕 Не напоминать 2 недели', '🔕 Mute for 2 weeks')}</button>`;
@@ -1455,10 +1479,18 @@ function remindRow() {
 
 async function setReminders(off) {
   try {
-    const res = await api.reminders(off);
-    ui.user.remindOff = res.remindOff;
+    const res = await api.reminders({ off, tz: browserTz() || undefined });
+    if (res.user) ui.user = res.user;
     openSettings();
     toast(off ? T('Напоминания выключены на 2 недели', 'Reminders muted for 2 weeks') : T('Напоминания включены', 'Reminders turned on'), 'good');
+  } catch (e) { toast(e.message, 'bad'); }
+}
+
+async function setRemindHour(hour) {
+  try {
+    const res = await api.reminders({ hour, tz: browserTz() || undefined });
+    if (res.user) ui.user = res.user;
+    toast(T('Время напоминания сохранено', 'Reminder time saved'), 'good');
   } catch (e) { toast(e.message, 'bad'); }
 }
 
@@ -1688,6 +1720,7 @@ function bindEvents() {
   document.addEventListener('visibilitychange', () => { if (!document.hidden) pullFromServer(); });
   window.addEventListener('focus', pullFromServer);
   document.addEventListener('click', onClick);
+  document.addEventListener('change', onChange);
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       if (!$('#sheet').hidden) closeSheet();
@@ -1717,6 +1750,12 @@ function bindEvents() {
       if (!(result instanceof Promise) && result !== false) closeSheet();
     }
   });
+}
+
+function onChange(e) {
+  const sel = e.target.closest('[data-change]');
+  if (!sel) return;
+  if (sel.dataset.change === 'remind-hour') setRemindHour(parseInt(sel.value, 10));
 }
 
 function onClick(e) {
