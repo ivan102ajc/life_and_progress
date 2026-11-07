@@ -1334,6 +1334,7 @@ function openSettings() {
     <h3>${T('Профиль', 'Profile')}</h3>
     <label class="field"><span>${T('Имя', 'Name')}</span><input id="set-name" maxlength="40" value="${esc(ui.save.name || ui.user.name)}"></label>
     ${accountBlock()}
+    ${remindRow()}
     <div class="sheet-actions stack">
       <button class="btn btn-ghost" data-action="save-name">${T('Сохранить имя', 'Save name')}</button>
       <button class="btn btn-ghost" data-action="tour-again">${T('Пройти обучение заново', 'Replay the tutorial')}</button>
@@ -1432,6 +1433,33 @@ function accountBlock() {
     </div>
     ${TG.wa && !u.email ? `<button class="btn btn-ghost btn-wide" data-action="merge-login">${T('Уже играю на сайте — объединить', 'I already play on the website — merge')}</button>` : ''}
     <p class="small muted">${T('Связанные вход по почте и Telegram — это один аккаунт: отметил дело на телефоне — увидишь его на компьютере. При объединении прогресс складывается, ничего не теряется.', 'Linked email login and Telegram are one account: log on your phone, see it on your computer. Merging adds the progress together — nothing is lost.')}</p>`;
+}
+
+// Управление ежедневными напоминаниями бота (только если привязан Telegram).
+function remindRow() {
+  const u = ui.user;
+  if (!u.telegram) {
+    return `<h3>${T('Напоминания', 'Reminders')}</h3>
+      <p class="small muted">${T('Привяжи Telegram выше — и бот будет раз в день напоминать зайти в игру.', 'Link Telegram above and the bot will remind you once a day to drop into the game.')}</p>`;
+  }
+  const off = (u.remindOff || 0) > Date.now();
+  const until = off ? new Date(u.remindOff).toLocaleDateString(T('ru-RU', 'en-US')) : '';
+  return `<h3>${T('Напоминания', 'Reminders')}</h3>
+    <p class="small muted">${off
+      ? T(`Напоминания выключены до ${until}.`, `Reminders are off until ${until}.`)
+      : T('Бот раз в день напоминает зайти в игру, если ты ещё не заходил в этот день.', 'The bot reminds you once a day to drop in, unless you’ve already been in that day.')}</p>
+    <button class="btn btn-ghost btn-wide" data-action="${off ? 'remind-on' : 'remind-off'}">${off
+      ? T('Включить напоминания', 'Turn reminders on')
+      : T('🔕 Не напоминать 2 недели', '🔕 Mute for 2 weeks')}</button>`;
+}
+
+async function setReminders(off) {
+  try {
+    const res = await api.reminders(off);
+    ui.user.remindOff = res.remindOff;
+    openSettings();
+    toast(off ? T('Напоминания выключены на 2 недели', 'Reminders muted for 2 weeks') : T('Напоминания включены', 'Reminders turned on'), 'good');
+  } catch (e) { toast(e.message, 'bad'); }
 }
 
 function credentialsForm(title, text, submitLabel, extra = '') {
@@ -1787,6 +1815,8 @@ function onClick(e) {
     case 'link-tg': return startLinkTelegram();
     case 'feedback': return openFeedback();
     case 'delete-account': return openDeleteAccount();
+    case 'remind-off': return setReminders(true);
+    case 'remind-on': return setReminders(false);
     case 'check-link':
       refreshUser().then((u) => {
         closeSheet();

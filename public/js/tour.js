@@ -19,6 +19,7 @@ export const FEATURES = [
   { id: 'language', title: ['Английский язык', 'English language'] },
   { id: 'sublink', title: ['Время на подветвь засчитывает дело', 'Sub-branch time counts as an activity'] },
   { id: 'feedback', title: ['Можно написать разработчику', 'You can message the developer'] },
+  { id: 'reminders', title: ['Напоминания от бота', 'Reminders from the bot'] },
 ];
 
 // nav — какой экран открыть перед шагом; target — что подсветить
@@ -89,6 +90,10 @@ export const STEPS = [
     title: ['Напиши разработчику', 'Message the developer'],
     text: ['Нашёл ошибку или есть идея? В настройках → «Помощь» есть кнопка «Написать разработчику». Если привязан Telegram, ответ придёт от бота игры. Там же — политика конфиденциальности и удаление аккаунта.',
       'Found a bug or have an idea? Settings → “Help” has a “Message the developer” button. If Telegram is linked, the reply comes from the game bot. The privacy policy and account deletion are there too.'] },
+  { feature: 'reminders', nav: { tab: 'tree' }, target: '[data-action="settings"]',
+    title: ['Бот напомнит зайти', 'The bot will remind you'],
+    text: ['Если привязан Telegram, бот раз в день напомнит заглянуть в игру и отметить дело. Не хочешь — в настройках есть кнопка «Не напоминать 2 недели», и та же кнопка есть прямо под напоминанием.',
+      'If Telegram is linked, the bot reminds you once a day to drop in and log something. Don’t want that? Settings has a “Mute for 2 weeks” button, and so does the reminder itself.'] },
 ];
 
 const pick = (v) => (Array.isArray(v) ? T(v[0], v[1]) : v);

@@ -124,7 +124,7 @@ export default handle(async (req, res) => {
       webhook: await tg('setWebhook', {
         url: `${url}/api/bot`,
         secret_token: HOOK_SECRET,
-        allowed_updates: ['message'],
+        allowed_updates: ['message', 'callback_query'],
       }),
       menuButton: await tg('setChatMenuButton', {
         menu_button: { type: 'web_app', text: '🌳 Play', web_app: { url } },
@@ -173,6 +173,33 @@ export default handle(async (req, res) => {
   }
 
   const update = await readBody(req);
+
+  // Нажатие кнопки под напоминанием: «Не напоминать 2 недели».
+  const cq = update.callback_query;
+  if (cq) {
+    if (cq.data === 'snooze' && cq.from?.id) {
+      const db = await getDb();
+      const user = await db.getUserByTg(String(cq.from.id));
+      if (user) await db.setRemindOff(user.id, Date.now() + 14 * 24 * 60 * 60 * 1000);
+      await tg('answerCallbackQuery', {
+        callback_query_id: cq.id,
+        text: L(cq.from, 'Напоминания выключены на 2 недели 🔕', 'Reminders muted for 2 weeks 🔕'),
+        show_alert: true,
+      });
+      // Убираем кнопку «не напоминать», оставляем кнопку «открыть».
+      if (cq.message) {
+        await tg('editMessageReplyMarkup', {
+          chat_id: cq.message.chat.id,
+          message_id: cq.message.message_id,
+          reply_markup: { inline_keyboard: [[{ text: L(cq.from, '🌳 Открыть дерево', '🌳 Open my tree'), web_app: { url } }]] },
+        });
+      }
+    } else {
+      await tg('answerCallbackQuery', { callback_query_id: cq.id });
+    }
+    return send(res, 200, { ok: true });
+  }
+
   const msg = update.message;
   if (msg?.chat?.id && typeof msg.text === 'string') {
     const text = msg.text.trim();
