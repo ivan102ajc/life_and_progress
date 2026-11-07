@@ -11,6 +11,7 @@ import { getDb } from '../lib/db.js';
 import { signToken, signLinkCode, verifyTelegramInitData } from '../lib/auth.js';
 import { send, readBody, handle, currentUser, publicUser, tr } from '../lib/http.js';
 import { linkTelegram, maskEmail } from '../lib/link.js';
+import { notifyNewPlayer } from '../lib/admin.js';
 
 let botName = null;
 async function getBotName(token) {
@@ -68,6 +69,7 @@ export default handle(async (req, res) => {
   if (!user) {
     const name = [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ').slice(0, 40) || tr(req, 'Игрок', 'Player');
     user = await db.createUser({ name, tgId });
+    await notifyNewPlayer(db, user, 'Telegram');
   }
   return send(res, 200, { token: signToken(user.id), user: publicUser(user) });
 });

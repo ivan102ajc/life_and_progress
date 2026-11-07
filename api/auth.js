@@ -3,6 +3,7 @@
 import { getDb } from '../lib/db.js';
 import { hashPassword, verifyPassword, signToken } from '../lib/auth.js';
 import { send, readBody, handle, publicUser, currentUser, tr } from '../lib/http.js';
+import { notifyNewPlayer } from '../lib/admin.js';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -11,6 +12,21 @@ export default handle(async (req, res) => {
 
   const body = await readBody(req);
   const action = body.action;
+
+  // Удалить аккаунт и все его данные (прогресс, отзывы) — право игрока по закону.
+  if (action === 'delete') {
+    const me = await currentUser(req);
+    if (!me) return send(res, 401, { error: tr(req, 'Нужно войти в аккаунт', 'Please log in') });
+    if (me.pass_hash && !verifyPassword(String(body.password || ''), me.pass_hash)) {
+      return send(res, 401, { error: tr(req, 'Неверный пароль', 'Wrong password') });
+    }
+    if (!me.pass_hash && body.confirm !== true) {
+      return send(res, 400, { error: tr(req, 'Нужно подтверждение', 'Confirmation required') });
+    }
+    const db = await getDb();
+    await db.deleteUser(me.id);
+    return send(res, 200, { ok: true });
+  }
   const email = String(body.email || '').trim().toLowerCase();
   const password = String(body.password || '');
 
@@ -26,6 +42,7 @@ export default handle(async (req, res) => {
     }
     try {
       const user = await db.createUser({ email, name, passHash: hashPassword(password) });
+      await notifyNewPlayer(db, user, 'сайт');
       return send(res, 200, { token: signToken(user.id), user: publicUser(user) });
     } catch (err) {
       if (err.code === '23505' || /duplicate/i.test(err.message)) {

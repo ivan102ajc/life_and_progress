@@ -40,6 +40,8 @@ export const api = {
   attachEmail: (email, password) => request('/api/auth', { method: 'POST', body: { action: 'attach', email, password } }),
   linkCode: () => request('/api/telegram', { method: 'POST', body: { action: 'code' } }),
   unlinkTelegram: () => request('/api/telegram', { method: 'POST', body: { action: 'unlink' } }),
+  feedback: (text, platform) => request('/api/feedback', { method: 'POST', body: { text, platform } }),
+  deleteAccount: (password) => request('/api/auth', { method: 'POST', body: { action: 'delete', password, confirm: true } }),
   load: () => request('/api/state'),
   save: (data) => request('/api/state', { method: 'PUT', body: { data } }),
 };

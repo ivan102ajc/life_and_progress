@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Политика конфиденциальности — Древо жизни</title>
+  <style>
+    :root { --bg: #f6f8f2; --fg: #1f2a1c; --muted: #5d6b58; --line: #dfe6d8; --accent: #3f8a4a; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #141a13; --fg: #e8efe4; --muted: #a4b19e; --line: #2c3729; --accent: #7cc983; } }
+    body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    main { max-width: 720px; margin: 0 auto; padding: 32px 16px 64px; }
+    h1 { font-size: 28px; line-height: 1.2; margin: 0 0 4px; }
+    h2 { font-size: 19px; margin: 28px 0 6px; }
+    p, li { color: var(--fg); }
+    .muted { color: var(--muted); font-size: 14px; }
+    a { color: var(--accent); }
+    nav { display: flex; gap: 12px; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+    nav button { background: none; border: 1px solid var(--line); color: var(--fg); border-radius: 999px; padding: 6px 14px; font: inherit; cursor: pointer; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+<main>
+  <nav><a href="/">← <span data-ru>В игру</span><span data-en hidden>Back to the game</span></a>
+    <button id="sw" type="button">English</button></nav>
+
+  <article data-ru>
+    <h1>Политика конфиденциальности</h1>
+    <p class="muted">«Древо жизни» — учебный проект. Редакция от 7 ноября 2026 г.</p>
+
+    <h2>Какие данные мы храним</h2>
+    <ul>
+      <li><b>Аккаунт:</b> имя, почта и пароль (пароль хранится только в виде защищённого хэша — прочитать его нельзя), либо числовой id Telegram, если вход через Telegram.</li>
+      <li><b>Прогресс в игре:</b> отметки дел, навыки, подветви, заметки, настройки. Это нужно, чтобы дерево было доступно с любого устройства.</li>
+      <li><b>Отзывы,</b> которые ты сам отправляешь разработчику через кнопку «Написать разработчику».</li>
+      <li><b>Отчёты об ошибках:</b> если в приложении что-то сломалось, сохраняется текст ошибки, место в коде и тип браузера/устройства. Они не связаны с аккаунтом.</li>
+    </ul>
+
+    <h2>Для чего</h2>
+    <p>Только чтобы игра работала и становилась лучше. Разработчик видит <b>обезличенную статистику</b>: сколько игроков, сколько из них активны, какими функциями пользуются, какие дела популярны. Твои заметки, почта и личный прогресс в статистику не попадают. Разработчику приходят уведомления о новом игроке (только имя) и о твоих отзывах — чтобы он мог ответить.</p>
+
+    <h2>Кому передаём</h2>
+    <p>Никому. Мы не продаём данные и не показываем рекламу. Данные хранятся у хостинга <a href="https://vercel.com" target="_blank" rel="noopener">Vercel</a> и базы данных <a href="https://neon.tech" target="_blank" rel="noopener">Neon</a> (серверы за пределами России). Уведомления разработчику доставляет Telegram.</p>
+
+    <h2>Твои права</h2>
+    <ul>
+      <li>Посмотреть свои данные — всё, что мы храним о прогрессе, видно в игре.</li>
+      <li>Выгрузить дневник — «История → Дневник → Скачать».</li>
+      <li><b>Удалить аккаунт</b> — «Настройки → Помощь → Удалить аккаунт». Аккаунт, прогресс, заметки и отзывы удаляются сразу и навсегда.</li>
+      <li>Задать вопрос — «Настройки → Помощь → Написать разработчику».</li>
+    </ul>
+
+    <h2>Возраст</h2>
+    <p>Если тебе меньше 14 лет, попроси родителей прочитать эту страницу вместе с тобой.</p>
+
+    <p class="muted">Регистрируясь или входя через Telegram, ты соглашаешься с этой политикой. Если она изменится, мы сообщим об этом в игре.</p>
+  </article>
+
+  <article data-en hidden>
+    <h1>Privacy policy</h1>
+    <p class="muted">Tree of Life is a student project. Version of 7 November 2026.</p>
+
+    <h2>What we store</h2>
+    <ul>
+      <li><b>Account:</b> name, email and password (the password is stored only as a secure hash — nobody can read it), or your numeric Telegram id if you sign in with Telegram.</li>
+      <li><b>Game progress:</b> logged activities, skills, sub-branches, notes and settings, so your tree is available on any device.</li>
+      <li><b>Feedback</b> you choose to send with the “Message the developer” button.</li>
+      <li><b>Error reports:</b> if something breaks in the app, we store the error text, where in the code it happened and the browser/device type. They are not tied to your account.</li>
+    </ul>
+
+    <h2>Why</h2>
+    <p>Only to run the game and make it better. The developer sees <b>anonymous statistics</b>: how many players there are, how many are active, which features are used, which activities are popular. Your notes, email and personal progress are not part of the statistics. The developer gets a notification about new players (name only) and about your feedback, so they can reply.</p>
+
+    <h2>Who we share it with</h2>
+    <p>Nobody. We don’t sell data or show ads. Data is hosted by <a href="https://vercel.com" target="_blank" rel="noopener">Vercel</a> and the <a href="https://neon.tech" target="_blank" rel="noopener">Neon</a> database (servers outside Russia). Telegram delivers the developer’s notifications.</p>
+
+    <h2>Your rights</h2>
+    <ul>
+      <li>See your data — everything stored about your progress is visible in the game.</li>
+      <li>Export your journal — “History → Journal → Download”.</li>
+      <li><b>Delete your account</b> — “Settings → Help → Delete account”. The account, progress, notes and feedback are deleted immediately and permanently.</li>
+      <li>Ask a question — “Settings → Help → Message the developer”.</li>
+    </ul>
+
+    <h2>Age</h2>
+    <p>If you are under 14, please read this page together with a parent.</p>
+
+    <p class="muted">By signing up or signing in with Telegram you agree to this policy. If it changes, we’ll let you know in the game.</p>
+  </article>
+</main>
+<script>
+  (function () {
+    var en = /[?&]lang=en/.test(location.search);
+    try { if (!/[?&]lang=/.test(location.search) && localStorage.getItem('tol_lang') === 'en') en = true; } catch (e) {}
+    function apply() {
+      document.documentElement.lang = en ? 'en' : 'ru';
+      document.title = en ? 'Privacy policy — Tree of Life' : 'Политика конфиденциальности — Древо жизни';
+      [].forEach.call(document.querySelectorAll('[data-ru]'), function (n) { n.hidden = en; });
+      [].forEach.call(document.querySelectorAll('[data-en]'), function (n) { n.hidden = !en; });
+      document.getElementById('sw').textContent = en ? 'Русский' : 'English';
+    }
+    document.getElementById('sw').onclick = function () { en = !en; apply(); };
+    apply();
+  })();
+</script>
+</body>
+</html>

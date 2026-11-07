@@ -13,6 +13,9 @@ import { T, name as nm, plural, locale, setLang, getLang, detectLang, formatMinu
 import { api, auth } from './api.js';
 import { mergeSaves, sameSave } from './sync.js';
 import { planTour, runTour, tourActive, tourBack } from './tour.js';
+import { installErrorReporting } from './report.js';
+
+installErrorReporting();
 
 const DAY = 24 * 60 * 60 * 1000;
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -224,6 +227,7 @@ function renderAuth(error = '') {
         <label class="field"><span>${T('Пароль', 'Password')}</span><input name="password" type="password" autocomplete="${reg ? 'new-password' : 'current-password'}" required minlength="6" placeholder="${T('Не короче 6 символов', 'At least 6 characters')}"></label>
         <p class="form-error" role="alert">${esc(error)}</p>
         <button class="btn btn-primary btn-wide" type="submit">${reg ? T('Посадить своё дерево', 'Plant my tree') : T('Войти', 'Log in')}</button>
+        ${reg ? `<p class="small muted consent">${T('Регистрируясь, ты соглашаешься с', 'By signing up you agree to the')} <a href="/privacy.html${T('', '?lang=en')}" target="_blank" rel="noopener">${T('политикой конфиденциальности', 'privacy policy')}</a>.</p>` : ''}
       </form>
     </div>`;
 }
@@ -1335,8 +1339,72 @@ function openSettings() {
       <button class="btn btn-ghost" data-action="tour-again">${T('Пройти обучение заново', 'Replay the tutorial')}</button>
       <button class="btn btn-ghost" data-action="reset">${T('Начать заново', 'Start over')}</button>
       <button class="btn btn-ghost" data-action="logout">${T('Выйти из аккаунта', 'Log out')}</button>
+    </div>
+    <h3>${T('Помощь', 'Help')}</h3>
+    <div class="sheet-actions stack">
+      <button class="btn btn-ghost" data-action="feedback">💬 ${T('Написать разработчику', 'Message the developer')}</button>
+      <a class="btn btn-ghost" href="/privacy.html${T('', '?lang=en')}" target="_blank" rel="noopener">${T('Политика конфиденциальности', 'Privacy policy')}</a>
+      <button class="btn btn-ghost btn-danger-text" data-action="delete-account">${T('Удалить аккаунт', 'Delete account')}</button>
       <button class="btn btn-primary" data-action="close-sheet">${T('Готово', 'Done')}</button>
     </div>`);
+}
+
+// --- Отзыв разработчику ---
+function openFeedback() {
+  openSheet(`
+    <h2>${T('Написать разработчику', 'Message the developer')}</h2>
+    <p>${T('Нашёл ошибку, чего-то не хватает или есть идея? Напиши — сообщение придёт разработчику.', 'Found a bug, missing something, or have an idea? Write it here — it goes straight to the developer.')}
+      ${ui.user.telegram ? T('Ответ придёт в Telegram от бота игры.', 'The reply will come to you in Telegram from the game bot.') : T('Чтобы получить ответ, привяжи Telegram в настройках.', 'To get a reply, link Telegram in settings.')}</p>
+    <form id="sheet-form" novalidate>
+      <label class="field"><span>${T('Сообщение', 'Message')}</span>
+        <textarea name="text" rows="5" maxlength="2000" required placeholder="${T('Например: хочу, чтобы…', 'For example: I wish that…')}"></textarea></label>
+      <p class="field-hint">${T('Не пиши сюда пароли и личные данные.', 'Don’t include passwords or personal details.')}</p>
+      <p class="form-error" role="alert"></p>
+      <div class="sheet-actions">
+        <button type="button" class="btn btn-ghost" data-action="close-sheet">${T('Отмена', 'Cancel')}</button>
+        <button class="btn btn-primary" type="submit">${T('Отправить', 'Send')}</button>
+      </div>
+    </form>`, async (fd) => {
+    const text = String(fd.get('text') || '').trim();
+    const err = $('#sheet .form-error');
+    if (text.length < 3) { err.textContent = T('Напиши хотя бы пару слов', 'Write at least a few words'); return false; }
+    const btn = $('#sheet button[type=submit]');
+    btn.disabled = true;
+    try {
+      await api.feedback(text, TG.wa ? 'telegram' : 'web');
+      closeSheet();
+      toast(T('Спасибо! Сообщение отправлено', 'Thank you! Your message was sent'), 'good');
+    } catch (e) { err.textContent = e.message; btn.disabled = false; }
+    return false;
+  });
+}
+
+// --- Удаление аккаунта ---
+function openDeleteAccount() {
+  const needPass = Boolean(ui.user.email);
+  openSheet(`
+    <h2>${T('Удалить аккаунт?', 'Delete your account?')}</h2>
+    <p>${T('Аккаунт, всё дерево, история, заметки и отзывы будут удалены с сервера навсегда. Это нельзя отменить.', 'Your account, the whole tree, history, notes and feedback will be permanently deleted from the server. This can’t be undone.')}</p>
+    <form id="sheet-form" novalidate>
+      ${needPass ? `<label class="field"><span>${T('Пароль для подтверждения', 'Password to confirm')}</span><input name="password" type="password" autocomplete="current-password" required></label>` : ''}
+      <p class="form-error" role="alert"></p>
+      <div class="sheet-actions">
+        <button type="button" class="btn btn-ghost" data-action="close-sheet">${T('Отмена', 'Cancel')}</button>
+        <button class="btn btn-danger" type="submit">${T('Удалить навсегда', 'Delete forever')}</button>
+      </div>
+    </form>`, async (fd) => {
+    const err = $('#sheet .form-error');
+    try {
+      await api.deleteAccount(String(fd.get('password') || ''));
+      auth.token = null;
+      ui.user = null; ui.save = null; ui.selected = null;
+      closeSheet();
+      applyTheme(THEME_BY_ID.spring);
+      showAuth();
+      toast(T('Аккаунт удалён', 'Account deleted'), 'info');
+    } catch (e) { err.textContent = e.message; }
+    return false;
+  });
 }
 
 // --- Связь аккаунтов сайта и Telegram ---
@@ -1717,6 +1785,8 @@ function onClick(e) {
       return;
     }
     case 'link-tg': return startLinkTelegram();
+    case 'feedback': return openFeedback();
+    case 'delete-account': return openDeleteAccount();
     case 'check-link':
       refreshUser().then((u) => {
         closeSheet();

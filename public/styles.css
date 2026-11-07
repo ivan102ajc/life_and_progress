@@ -111,11 +111,11 @@ p { margin: 0; }
 
 .field { display: grid; gap: 6px; margin-bottom: 14px; border: 0; padding: 0; }
 .field > span, .field legend { font-size: 13px; font-weight: 700; color: var(--muted); padding: 0; margin-bottom: 6px; }
-.field input, .field select {
+.field input, .field select, .field textarea {
   width: 100%; min-height: 46px; padding: 10px 14px; border-radius: var(--r-sm); border: 1.5px solid var(--line);
   background: var(--bg); font-size: 16px;
 }
-.field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
+.field input:focus, .field select:focus, .field textarea:focus { outline: none; border-color: var(--accent); }
 .form-error, .sheet-card .form-error { color: var(--bad); font-size: 14px; min-height: 1em; font-weight: 600; }
 .check-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .check { display: flex; gap: 8px; align-items: center; font-size: 14px; padding: 6px 4px; }
@@ -590,3 +590,12 @@ p { margin: 0; }
   .scene svg { height: auto; }
 }
 .boot-details { font-size: 11px; color: var(--muted); max-width: 46ch; word-break: break-word; margin-top: 10px; }
+
+/* Отзыв, согласие, удаление аккаунта */
+.consent { margin: 10px 0 0; text-align: center; }
+.consent a, .sheet-actions a.btn { text-decoration: none; }
+.consent a { color: inherit; text-decoration: underline; }
+.btn-danger-text { color: var(--bad); }
+.field textarea {
+  resize: vertical; min-height: 110px; font-family: inherit; color: inherit;
+}

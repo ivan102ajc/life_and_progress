@@ -74,6 +74,13 @@
             : 'The game could not start. Possible reasons: no internet, the site is blocked by your provider (try a VPN), or the built-in browser is outdated — update Telegram and “Android System WebView” in the Play Store.') + '</p>' +
           '<button class="btn" onclick="location.reload()">' + (ru ? 'Попробовать снова' : 'Try again') + '</button>' +
           '<p class="boot-details">' + reason + (detail ? ': ' + String(detail).slice(0, 160) : '') + '<br>' + navigator.userAgent + '</p>';
+        // Сообщаем разработчику, что игра не запустилась (без личных данных).
+        try {
+          var x = new XMLHttpRequest();
+          x.open('POST', '/api/report');
+          x.setRequestHeader('Content-Type', 'application/json');
+          x.send(JSON.stringify({ message: 'Boot failed: ' + reason + (detail ? ': ' + String(detail).slice(0, 200) : ''), where: 'boot' }));
+        } catch (e) {}
       };
       window.addEventListener('error', function (e) { window.__bootFail('error', e.message); });
       setTimeout(function () { window.__bootFail('timeout'); }, 20000);

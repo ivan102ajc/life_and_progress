@@ -11,6 +11,44 @@ import { send, readBody, handle } from '../lib/http.js';
 import { getDb } from '../lib/db.js';
 import { verifyLinkCode } from '../lib/auth.js';
 import { linkTelegram, maskEmail } from '../lib/link.js';
+import { isAdmin, adminIds, computeStats } from '../lib/admin.js';
+
+const fmtDate = (ms) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
+
+// Команды разработчика. Возвращает текст ответа или null, если это не команда админа.
+async function adminCommand(msg, text) {
+  const db = await getDb();
+  if (/^\/stats\b/.test(text)) return (await computeStats(db)).text;
+  if (/^\/errors\b/.test(text)) {
+    const list = await db.listErrors(Date.now() - 7 * 24 * 60 * 60 * 1000, 8);
+    if (!list.length) return '✅ За неделю ошибок не было.';
+    return '⚠️ Частые ошибки за неделю:\n\n' + list.map(e =>
+      `×${e.count} · ${e.message}${e.source ? `\n📍 ${e.source}` : ''}\n🕒 последняя ${fmtDate(e.lastAt)} UTC`).join('\n\n');
+  }
+  if (/^\/feedback\b/.test(text)) {
+    const list = await db.listFeedback(8);
+    if (!list.length) return 'Отзывов пока нет.';
+    return '💬 Последние отзывы:\n\n' + list.map(f =>
+      `#${f.id} · ${f.name || 'игрок удалён'} · ${f.platform === 'telegram' ? 'Telegram' : 'сайт'} · ${fmtDate(f.createdAt)}\n${f.text}`).join('\n\n') +
+      '\n\nЧтобы ответить игроку — ответь (reply) на уведомление об отзыве.';
+  }
+  // Ответ разработчика на уведомление об отзыве уходит игроку.
+  const quoted = msg.reply_to_message?.text || '';
+  const m = quoted.match(/Отзыв #(\d+)/);
+  if (m && !text.startsWith('/')) {
+    const fb = await db.getFeedback(m[1]);
+    const player = fb ? await db.getUserById(fb.user_id) : null;
+    if (!player) return 'Игрок удалил аккаунт — ответить не получится.';
+    if (!player.tg_id) return 'У игрока не привязан Telegram — ответить через бота не получится.';
+    const en = (fb.lang || '').startsWith('en');
+    const r = await tg('sendMessage', {
+      chat_id: player.tg_id,
+      text: (en ? '💬 Reply from the Tree of Life developer:\n\n' : '💬 Ответ разработчика «Древа жизни»:\n\n') + text,
+    });
+    return r.ok ? `✅ Ответ отправлен игроку «${player.name}».` : 'Не получилось отправить: игрок, возможно, остановил бота.';
+  }
+  return null;
+}
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 // Секрет, по которому мы узнаём, что запрос пришёл именно от Telegram.
@@ -83,6 +121,17 @@ export default handle(async (req, res) => {
           { command: 'help', description: 'Как играть' },
         ],
       }),
+      // Для разработчика — отдельный список команд, его видят только админы.
+      adminCommands: adminIds().length ? await Promise.all(adminIds().map(id => tg('setMyCommands', {
+        scope: { type: 'chat', chat_id: Number(id) },
+        commands: [
+          { command: 'stats', description: 'Статистика игры' },
+          { command: 'errors', description: 'Частые ошибки' },
+          { command: 'feedback', description: 'Последние отзывы' },
+          { command: 'start', description: 'Открыть Древо жизни' },
+          { command: 'myid', description: 'Мой Telegram id' },
+        ],
+      }))).then(rs => ({ ok: rs.every(r => r.ok), results: rs })) : { ok: true, skipped: 'ADMIN_TELEGRAM_ID не задан' },
       description: await tg('setMyShortDescription', {
         short_description: 'A self-improvement game: real activities grow your tree 🌳',
       }),
@@ -107,7 +156,15 @@ export default handle(async (req, res) => {
     const from = msg.from;
     const button = { reply_markup: { inline_keyboard: [[{ text: L(from, '🌳 Открыть моё дерево', '🌳 Open my tree'), web_app: { url } }]] } };
     const payload = text.startsWith('/start ') ? text.slice(7).trim() : '';
-    if (payload.startsWith('L') && msg.from?.id) {
+    const adminReply = msg.from?.id && isAdmin(msg.from.id) ? await adminCommand(msg, text) : null;
+    if (adminReply) {
+      await tg('sendMessage', { chat_id: msg.chat.id, text: adminReply.slice(0, 4000), disable_web_page_preview: true });
+    } else if (/^\/myid\b/.test(text)) {
+      await tg('sendMessage', {
+        chat_id: msg.chat.id,
+        text: L(from, `Твой Telegram id: ${msg.from?.id}`, `Your Telegram id: ${msg.from?.id}`),
+      });
+    } else if (payload.startsWith('L') && msg.from?.id) {
       // Привязка Telegram к аккаунту с сайта по ссылке из настроек игры.
       const userId = verifyLinkCode(payload);
       const db = await getDb();

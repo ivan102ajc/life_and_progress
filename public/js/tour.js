@@ -18,6 +18,7 @@ export const FEATURES = [
   { id: 'accounts', title: ['Один аккаунт на сайте и в Telegram', 'One account on the website and in Telegram'] },
   { id: 'language', title: ['Английский язык', 'English language'] },
   { id: 'sublink', title: ['Время на подветвь засчитывает дело', 'Sub-branch time counts as an activity'] },
+  { id: 'feedback', title: ['Можно написать разработчику', 'You can message the developer'] },
 ];
 
 // nav — какой экран открыть перед шагом; target — что подсветить
@@ -84,6 +85,10 @@ export const STEPS = [
     title: ['Русский или английский', 'Russian or English'],
     text: ['Язык игры можно сменить в настройках. Выбор сохраняется в аккаунте — на всех устройствах.',
       'You can switch the game language in settings. Your choice is saved to your account — on every device.'] },
+  { feature: 'feedback', nav: { tab: 'tree' }, target: '[data-action="settings"]',
+    title: ['Напиши разработчику', 'Message the developer'],
+    text: ['Нашёл ошибку или есть идея? В настройках → «Помощь» есть кнопка «Написать разработчику». Если привязан Telegram, ответ придёт от бота игры. Там же — политика конфиденциальности и удаление аккаунта.',
+      'Found a bug or have an idea? Settings → “Help” has a “Message the developer” button. If Telegram is linked, the reply comes from the game bot. The privacy policy and account deletion are there too.'] },
 ];
 
 const pick = (v) => (Array.isArray(v) ? T(v[0], v[1]) : v);
