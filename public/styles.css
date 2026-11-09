@@ -599,3 +599,13 @@ p { margin: 0; }
 .field textarea {
   resize: vertical; min-height: 110px; font-family: inherit; color: inherit;
 }
+
+/* Ссылки-кнопки на экране входа (забыли пароль / назад) */
+.linklike {
+  display: block; width: 100%; margin: 12px 0 0;
+  background: none; border: 0; padding: 4px; cursor: pointer;
+  color: var(--muted, #8aa); font: inherit; font-size: 14px; text-align: center;
+  text-decoration: underline; text-underline-offset: 2px;
+}
+.linklike:hover { color: var(--fg, inherit); }
+.auth-card h2 { margin: 4px 0 0; font-size: 20px; }

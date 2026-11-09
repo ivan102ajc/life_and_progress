@@ -55,6 +55,11 @@ async function start() {
   const tg = await initTelegram();
   setLang(detectLang(tg?.initDataUnsafe?.user?.language_code));
   applyStaticTexts();
+
+  // Переход по ссылке сброса пароля из Telegram — показываем экран нового пароля.
+  const pwreset = new URLSearchParams(location.search).get('pwreset');
+  if (pwreset) { showResetPassword(pwreset); return; }
+
   if (tg?.initData) {
     try {
       const res = await api.telegram(tg.initData);
@@ -227,9 +232,89 @@ function renderAuth(error = '') {
         <label class="field"><span>${T('Пароль', 'Password')}</span><input name="password" type="password" autocomplete="${reg ? 'new-password' : 'current-password'}" required minlength="6" placeholder="${T('Не короче 6 символов', 'At least 6 characters')}"></label>
         <p class="form-error" role="alert">${esc(error)}</p>
         <button class="btn btn-primary btn-wide" type="submit">${reg ? T('Посадить своё дерево', 'Plant my tree') : T('Войти', 'Log in')}</button>
+        ${!reg ? `<button type="button" class="linklike" data-action="forgot-pass">${T('Забыли пароль?', 'Forgot your password?')}</button>` : ''}
         ${reg ? `<p class="small muted consent">${T('Регистрируясь, ты соглашаешься с', 'By signing up you agree to the')} <a href="/privacy.html${T('', '?lang=en')}" target="_blank" rel="noopener">${T('политикой конфиденциальности', 'privacy policy')}</a>.</p>` : ''}
       </form>
     </div>`;
+}
+
+// --- Восстановление пароля ---
+
+// Экран «забыли пароль»: ввод почты. Ссылка для сброса придёт в Telegram.
+function renderForgot(error = '') {
+  showScreen('auth');
+  $('#auth').innerHTML = `
+    <div class="auth-card">
+      <div class="auth-top"><h1 class="logo">${T('Древо жизни', 'Tree of Life')}</h1>${langSwitch('lang-auth')}</div>
+      <h2>${T('Восстановление пароля', 'Reset your password')}</h2>
+      <p class="auth-lead">${T('Укажи почту аккаунта. Если к нему привязан Telegram, бот пришлёт туда ссылку для нового пароля.', 'Enter your account email. If it has Telegram linked, the bot will send a reset link there.')}</p>
+      <form id="forgot-form" novalidate>
+        <label class="field"><span>${T('Почта', 'Email')}</span><input name="email" type="email" autocomplete="email" required placeholder="${T('you@mail.ru', 'you@example.com')}"></label>
+        <p class="form-error" role="alert">${esc(error)}</p>
+        <button class="btn btn-primary btn-wide" type="submit">${T('Прислать ссылку в Telegram', 'Send link to Telegram')}</button>
+        <button type="button" class="linklike" data-action="back-to-login">${T('Назад ко входу', 'Back to login')}</button>
+      </form>
+      <p class="small muted">${T('Нет Telegram у аккаунта? Тогда сбросить пароль сам ты не сможешь — напиши разработчику.', 'Account has no Telegram linked? Then you can’t reset it yourself — contact the developer.')}</p>
+    </div>`;
+}
+
+async function submitForgot(form) {
+  const email = String(new FormData(form).get('email') || '').trim();
+  if (!email) return renderForgot(T('Введите почту', 'Enter your email'));
+  const btn = form.querySelector('button[type=submit]');
+  btn.disabled = true; btn.textContent = T('Отправляю…', 'Sending…');
+  try { await api.requestReset(email); } catch { /* ответ всегда одинаковый */ }
+  // Ответ один и тот же, существует почта или нет — так безопаснее.
+  $('#auth').innerHTML = `
+    <div class="auth-card">
+      <div class="auth-top"><h1 class="logo">${T('Древо жизни', 'Tree of Life')}</h1>${langSwitch('lang-auth')}</div>
+      <h2>${T('Проверь Telegram', 'Check Telegram')}</h2>
+      <p class="auth-lead">${T('Если аккаунт с этой почтой существует и к нему привязан Telegram, бот игры прислал туда ссылку для сброса пароля. Ссылка действует 30 минут.', 'If an account with this email exists and has Telegram linked, the game bot has sent a reset link there. The link is valid for 30 minutes.')}</p>
+      <button type="button" class="btn btn-primary btn-wide" data-action="back-to-login">${T('Вернуться ко входу', 'Back to login')}</button>
+    </div>`;
+}
+
+// Экран нового пароля — открывается по ссылке из Telegram (?pwreset=...).
+let pendingResetCode = null;
+function showResetPassword(code) {
+  pendingResetCode = code;
+  renderReset();
+}
+function renderReset(error = '') {
+  showScreen('auth');
+  $('#auth').innerHTML = `
+    <div class="auth-card">
+      <div class="auth-top"><h1 class="logo">${T('Древо жизни', 'Tree of Life')}</h1>${langSwitch('lang-auth')}</div>
+      <h2>${T('Новый пароль', 'New password')}</h2>
+      <p class="auth-lead">${T('Придумай новый пароль для входа по почте.', 'Choose a new password for email login.')}</p>
+      <form id="reset-form" novalidate>
+        <label class="field"><span>${T('Новый пароль', 'New password')}</span><input name="password" type="password" autocomplete="new-password" required minlength="6" placeholder="${T('Не короче 6 символов', 'At least 6 characters')}"></label>
+        <label class="field"><span>${T('Повтори пароль', 'Repeat password')}</span><input name="password2" type="password" autocomplete="new-password" required minlength="6"></label>
+        <p class="form-error" role="alert">${esc(error)}</p>
+        <button class="btn btn-primary btn-wide" type="submit">${T('Сохранить и войти', 'Save and log in')}</button>
+      </form>
+    </div>`;
+}
+
+async function submitReset(form) {
+  const fd = new FormData(form);
+  const password = String(fd.get('password') || '');
+  const password2 = String(fd.get('password2') || '');
+  if (password.length < 6) return renderReset(T('Пароль должен быть не короче 6 символов', 'Password must be at least 6 characters'));
+  if (password !== password2) return renderReset(T('Пароли не совпадают', 'Passwords don’t match'));
+  const btn = form.querySelector('button[type=submit]');
+  btn.disabled = true; btn.textContent = T('Сохраняю…', 'Saving…');
+  try {
+    const res = await api.resetPassword(pendingResetCode, password);
+    pendingResetCode = null;
+    auth.token = res.token;
+    // Убираем код из адреса, чтобы ссылка не осталась в истории.
+    try { history.replaceState(null, '', location.pathname); } catch { /* не важно */ }
+    toast(T('Пароль обновлён', 'Password updated'), 'good');
+    await loadGame();
+  } catch (err) {
+    renderReset(err.message);
+  }
 }
 
 async function submitAuth(form) {
@@ -1709,6 +1794,8 @@ function bindEvents() {
   document.addEventListener('submit', (e) => {
     e.preventDefault();
     if (e.target.id === 'auth-form') return submitAuth(e.target);
+    if (e.target.id === 'forgot-form') return submitForgot(e.target);
+    if (e.target.id === 'reset-form') return submitReset(e.target);
     if (e.target.id === 'sheet-form') {
       const fn = $('#sheet')._onSubmit;
       if (!fn) return;
@@ -1815,6 +1902,8 @@ function onClick(e) {
     case 'link-tg': return startLinkTelegram();
     case 'feedback': return openFeedback();
     case 'delete-account': return openDeleteAccount();
+    case 'forgot-pass': return renderForgot();
+    case 'back-to-login': return showAuth();
     case 'remind-off': return setReminders(true);
     case 'remind-on': return setReminders(false);
     case 'check-link':
