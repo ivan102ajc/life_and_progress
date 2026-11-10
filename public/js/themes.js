@@ -93,6 +93,42 @@ export const THEMES = [
       fruit: '#E43B44', leafShape: 'square', pixel: true,
     },
   },
+  {
+    id: 'starlit', minLevel: 9,
+    name: 'Звёздное древо', en: 'Starlit tree',
+    ui: {
+      bg: '#0E1026', surface: '#171A38', surface2: '#232651', ink: '#ECECFF', muted: '#9A9CCC',
+      line: '#2E3160', accent: '#A98BFF', accentInk: '#120A2A', good: '#8BE0C0', bad: '#FF7AA8',
+      headFont: "'Unbounded', system-ui, sans-serif", bodyFont: "'Manrope', system-ui, sans-serif",
+      radius: '16px',
+    },
+    tree: {
+      sky: ['#0A0C22', '#1A1D44'], decor: 'moon', sun: '#F2E9C0',
+      ground: '#20224A', ground2: '#15173A',
+      trunk: '#6E6AA8', trunkShade: '#4A4780',
+      leaves: ['#B49BFF', '#8FA9FF', '#D7C4FF', '#9BE3FF'],
+      wither: ['#555280', '#45426E', '#635F90'], dead: '#3C3A60',
+      fruit: '#FFE9A8', leafShape: 'round', glow: true,
+    },
+  },
+  {
+    id: 'aurora', minLevel: 20,
+    name: 'Северное сияние', en: 'Aurora',
+    ui: {
+      bg: '#071A1A', surface: '#0E2626', surface2: '#143636', ink: '#E6FFF7', muted: '#86B8AE',
+      line: '#1E4444', accent: '#49E6A0', accentInk: '#05231A', good: '#49E6A0', bad: '#FF7A9A',
+      headFont: "'Unbounded', system-ui, sans-serif", bodyFont: "'Manrope', system-ui, sans-serif",
+      radius: '16px',
+    },
+    tree: {
+      sky: ['#05131A', '#0C2A2E'], decor: 'moon', sun: '#D8FFF0',
+      ground: '#103030', ground2: '#0A2222',
+      trunk: '#5E7A72', trunkShade: '#3E554F',
+      leaves: ['#49E6A0', '#54C8E6', '#9B7BFF', '#7BFFC0'],
+      wither: ['#3E5E56', '#345048', '#4A6A60'], dead: '#2E4842',
+      fruit: '#CFA8FF', leafShape: 'round', glow: true,
+    },
+  },
 ];
 
 export const THEME_BY_ID = Object.fromEntries(THEMES.map(t => [t.id, t]));
@@ -114,7 +150,7 @@ export function applyTheme(theme) {
   r.setProperty('--font-body', u.bodyFont);
   r.setProperty('--radius', u.radius);
   document.documentElement.dataset.theme = theme.id;
-  document.documentElement.classList.toggle('is-dark', theme.id === 'neon');
+  document.documentElement.classList.toggle('is-dark', ['neon', 'starlit', 'aurora'].includes(theme.id));
   document.documentElement.classList.toggle('is-pixel', Boolean(u.pixel));
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute('content', u.bg);

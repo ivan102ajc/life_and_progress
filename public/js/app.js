@@ -6,6 +6,7 @@ import {
   findMaterial, countOnDay, skillStatus, dependentSkills, dayKey,
   findSub, subsOf, SUB_RULES, linkedAction, guessAction,
   STREAK_MILESTONES, nextMilestone,
+  PATH, pathTier, pathPerks, earnedBadges,
 } from './game.js';
 import { THEMES, THEME_BY_ID, applyTheme } from './themes.js';
 import { renderTree, renderBranch, subColor } from './tree.js';
@@ -236,6 +237,53 @@ function renderAuth(error = '') {
         ${reg ? `<p class="small muted consent">${T('Регистрируясь, ты соглашаешься с', 'By signing up you agree to the')} <a href="/privacy.html${T('', '?lang=en')}" target="_blank" rel="noopener">${T('политикой конфиденциальности', 'privacy policy')}</a>.</p>` : ''}
       </form>
     </div>`;
+}
+
+// --- Путь дерева: карта достижений ---
+const tierName = (t) => T(t.name[0], t.name[1]);
+function grantChip(g) {
+  if (g.grow) return `🌿 ${T('Дерево пышнее', 'Fuller tree')}`;
+  if (g.boost) return `⚡ ${T('+' + Math.round(g.boost * 100) + '% опыта', '+' + Math.round(g.boost * 100) + '% XP')}`;
+  if (g.style) { const th = THEME_BY_ID[g.style]; return `🎨 ${T('Стиль', 'Style')} «${th ? nm(th) : g.style}»`; }
+  const d = {
+    blossom: ['🌸', ['Цветение', 'Blossom']], fireflies: ['✨', ['Светлячки', 'Fireflies']],
+    fruits: ['🍎', ['Плоды', 'Fruit']], birds: ['🐦', ['Птицы', 'Birds']], aura: ['🌟', ['Сияние кроны', 'Radiant glow']],
+  }[g.decor];
+  return d ? `${d[0]} ${T(d[1][0], d[1][1])}` : '';
+}
+
+function openPath() {
+  const st = ui.state || compute(ui.save);
+  const level = st.player.level;
+  const cur = pathTier(level);
+  const p = st.player;
+  const rows = PATH.map((tier, i) => {
+    const reached = level >= tier.level;
+    const isCurrent = cur.index === i;
+    const chips = tier.grants.map(grantChip).filter(Boolean).map(c => `<span class="rw">${c}</span>`).join('');
+    return `<li class="ptier${reached ? ' is-done' : ''}${isCurrent ? ' is-current' : ''}">
+      <div class="pnode">${reached ? (isCurrent ? '★' : '✓') : tier.level}</div>
+      <div class="pbody">
+        <div class="pname">${esc(tierName(tier))} <span class="plvl">${T('ур.', 'lv')} ${tier.level}</span></div>
+        <div class="rewards">${chips || `<span class="rw muted">${T('Звание', 'Title')}</span>`}</div>
+      </div>
+    </li>`;
+  }).join('');
+  const badgeHtml = earnedBadges(st).map(b => `
+    <div class="badge${b.earned ? ' is-on' : ''}" title="${esc(T(b.desc[0], b.desc[1]))}">
+      <span class="bi">${b.icon}</span><span class="bn">${esc(T(b.name[0], b.name[1]))}</span>
+    </div>`).join('');
+  const toNext = cur.next ? T(`До «${tierName(cur.next)}» — ещё ${p.need - p.into} опыта`, `${p.need - p.into} XP to “${tierName(cur.next)}”`) : T('Вершина пути достигнута 🌳', 'You’ve reached the summit 🌳');
+  openSheet(`
+    <h2>${T('Путь дерева', 'Tree Path')}</h2>
+    <p class="path-now">${T('Сейчас', 'Now')}: <strong>${esc(nm(st.stage))}</strong> · ${T('уровень', 'level')} ${level}</p>
+    <div class="path-bar"><i style="width:${Math.round(p.progress * 100)}%"></i></div>
+    <p class="small muted">${toNext}. ${T('Общий опыт растит дерево и открывает награды.', 'Total XP grows your tree and unlocks rewards.')}</p>
+    <ol class="path-map">${rows}</ol>
+    <h3>${T('Достижения', 'Achievements')}</h3>
+    <div class="badges">${badgeHtml}</div>
+    <div class="sheet-actions"><button class="btn btn-primary" data-action="close-sheet">${T('Готово', 'Done')}</button></div>
+  `);
 }
 
 // --- Восстановление пароля ---
@@ -573,13 +621,13 @@ function render() {
 function renderTopbar(st) {
   const p = st.player;
   $('#topbar').innerHTML = `
-    <div class="tb-stage">
+    <button class="tb-stage" data-action="open-path" title="${T('Открыть Путь дерева', 'Open the Tree Path')}">
       <div class="tb-level" style="--p:${Math.round(p.progress * 100)}" aria-label="${T('Уровень', 'Level')} ${p.level}">${p.level}</div>
       <div class="tb-text">
         <strong>${esc(nm(st.stage))}</strong>
         <span>${T(`${p.into} / ${p.need} опыта до уровня ${p.level + 1}`, `${p.into} / ${p.need} XP to level ${p.level + 1}`)}</span>
       </div>
-    </div>
+    </button>
     <div class="tb-right">
       <button class="streak${st.streak ? '' : ' is-zero'}" data-action="tab" data-tab="log" title="${T('Дней подряд с полезными делами. Нажми, чтобы открыть огоньки', 'Days in a row with something useful. Tap to open streaks')}">
         ${FLAME}
@@ -1401,13 +1449,16 @@ function openSubMenu(subId) {
 }
 
 function openSettings() {
+  const level = (ui.state || compute(ui.save)).player.level;
   const themes = THEMES.map(th => {
     const leaves = th.tree.leaves || ['#5CF2C4', '#FF6B8B', '#5B8DEF'];
+    const locked = th.minLevel && level < th.minLevel;
+    const act = locked ? `data-action="locked-theme" data-lvl="${th.minLevel}"` : `data-action="theme" data-id="${th.id}"`;
     return `
-      <button class="theme-card${ui.save.theme === th.id ? ' is-on' : ''}" data-action="theme" data-id="${th.id}"
+      <button class="theme-card${ui.save.theme === th.id ? ' is-on' : ''}${locked ? ' is-locked' : ''}" ${act}
         style="--s1:${th.tree.sky[0]};--s2:${th.tree.sky[1]};--g:${th.tree.ground};--t:${th.tree.trunk};--l1:${leaves[0]};--l2:${leaves[1]};--l3:${leaves[2]}">
         <span class="theme-preview ${th.tree.pixel ? 'is-pixel' : ''}"><i class="tp-trunk"></i><i class="tp-l1"></i><i class="tp-l2"></i><i class="tp-l3"></i></span>
-        <span>${nm(th)}</span>
+        <span>${nm(th)}${locked ? ` <span class="lock">🔒 ${T('ур.', 'lv')} ${th.minLevel}</span>` : ''}</span>
       </button>`;
   }).join('');
   openSheet(`
@@ -1904,6 +1955,8 @@ function onClick(e) {
     case 'delete-account': return openDeleteAccount();
     case 'forgot-pass': return renderForgot();
     case 'back-to-login': return showAuth();
+    case 'open-path': return openPath();
+    case 'locked-theme': return toast(T(`Стиль откроется на уровне ${el.dataset.lvl} — иди по Пути дерева`, `This style unlocks at level ${el.dataset.lvl} — follow the Tree Path`), 'info');
     case 'remind-off': return setReminders(true);
     case 'remind-on': return setReminders(false);
     case 'check-link':

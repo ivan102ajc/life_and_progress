@@ -179,6 +179,94 @@ export function dayKey(t) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+// --- «Путь дерева» — карта достижений --------------------------------------
+// Прогресс по общему уровню дерева (level из суммарного опыта всех сфер).
+// На каждой вехе — награда: grow (пышность дерева), decor (украшение),
+// style (новый стиль оформления), boost (ускорение роста опыта).
+export const PATH = [
+  { level: 0,  name: ['Семечко', 'Seed'], grants: [] },
+  { level: 1,  name: ['Проросток', 'Seedling'], grants: [{ grow: 1 }] },
+  { level: 2,  name: ['Росток', 'Sprout'], grants: [{ grow: 1 }, { decor: 'blossom' }] },
+  { level: 3,  name: ['Первые листья', 'First leaves'], grants: [{ decor: 'fireflies' }] },
+  { level: 5,  name: ['Саженец', 'Sapling'], grants: [{ grow: 1 }, { boost: 0.03 }] },
+  { level: 7,  name: ['Крепкий стебель', 'Strong stem'], grants: [{ decor: 'fruits' }] },
+  { level: 9,  name: ['Молодое деревце', 'Young tree'], grants: [{ grow: 1 }, { style: 'starlit' }] },
+  { level: 12, name: ['Пышная крона', 'Lush crown'], grants: [{ grow: 1 }, { boost: 0.03 }] },
+  { level: 14, name: ['Крепкое дерево', 'Sturdy tree'], grants: [{ decor: 'birds' }] },
+  { level: 17, name: ['Цветущий сад', 'Blooming garden'], grants: [{ grow: 1 }, { boost: 0.03 }] },
+  { level: 20, name: ['Раскидистое древо', 'Spreading tree'], grants: [{ grow: 1 }, { style: 'aurora' }] },
+  { level: 24, name: ['Сияющая крона', 'Radiant crown'], grants: [{ decor: 'aura' }, { boost: 0.03 }] },
+  { level: 28, name: ['Вековое древо', 'Ancient tree'], grants: [{ grow: 2 }, { decor: 'aura' }] },
+  { level: 38, name: ['Древо мудрости', 'Tree of wisdom'], grants: [{ grow: 2 }, { boost: 0.03 }] },
+];
+
+// Текущая веха, её номер и следующая — для экрана пути.
+export function pathTier(level) {
+  let tier = PATH[0]; let index = 0;
+  PATH.forEach((t, i) => { if (level >= t.level) { tier = t; index = i; } });
+  return { tier, index, next: PATH.find(t => t.level > level) || null };
+}
+
+// Всё, что открыто к этому уровню: пышность, украшения, стили, ускорение опыта.
+export function pathPerks(level) {
+  let growth = 0; let boost = 0;
+  const decor = new Set(); const styles = new Set();
+  for (const t of PATH) {
+    if (t.level > level) continue;
+    for (const g of t.grants) {
+      if (g.grow) growth += g.grow;
+      if (g.boost) boost += g.boost;
+      if (g.decor) decor.add(g.decor);
+      if (g.style) styles.add(g.style);
+    }
+  }
+  return { growth, boost, decor, styles };
+}
+
+// Ускорение опыта, положенное при данном суммарном опыте (для расчёта роста).
+function boostForXp(xp) {
+  return pathPerks(levelInfo(xp, RULES.playerXpBase).level).boost;
+}
+
+// --- Бейджи-достижения ------------------------------------------------------
+// Значки за конкретные свершения. Каждое проверяется по вычисленному состоянию.
+export const BADGES = [
+  { id: 'first', icon: '🌱', name: ['Первый росток', 'First sprout'],
+    desc: ['Отметить первое полезное дело', 'Log your first activity'],
+    has: (st) => st.totalXp > 0 },
+  { id: 'week', icon: '🔥', name: ['Неделя огня', 'Week on fire'],
+    desc: ['Серия в 7 дней подряд', 'A 7-day streak'],
+    has: (st) => bestStreak(st) >= 7 },
+  { id: 'month', icon: '⚡', name: ['Месяц огня', 'Month on fire'],
+    desc: ['Серия в 30 дней подряд', 'A 30-day streak'],
+    has: (st) => bestStreak(st) >= 30 },
+  { id: 'allspheres', icon: '🌈', name: ['Разносторонний', 'Well-rounded'],
+    desc: ['Начать развивать все 8 сфер', 'Start all 8 life areas'],
+    has: (st) => SPHERES.every(s => st.spheres[s.id].started) },
+  { id: 'gardener', icon: '🪴', name: ['Садовник', 'Gardener'],
+    desc: ['Довести все сферы до 5 уровня', 'Bring every area to level 5'],
+    has: (st) => SPHERES.every(s => st.spheres[s.id].level >= 5) },
+  { id: 'hundred', icon: '💯', name: ['Сотня дел', 'A hundred deeds'],
+    desc: ['Отметить 100 полезных дел', 'Log 100 good deeds'],
+    has: (st) => totalActions(st) >= 100 },
+  { id: 'clean', icon: '🛡️', name: ['Чистая неделя', 'Clean week'],
+    desc: ['7 дней без вредных привычек', '7 days with no bad habits'],
+    has: (st) => (st.cleanDays || 0) >= 7 },
+  { id: 'mighty', icon: '🌳', name: ['Могучее древо', 'Mighty tree'],
+    desc: ['Достичь 20 уровня дерева', 'Reach tree level 20'],
+    has: (st) => st.player.level >= 20 },
+];
+
+function bestStreak(st) {
+  return Math.max(0, ...Object.values(st.streaks || {}).map(r => r.best || 0));
+}
+function totalActions(st) {
+  return Object.values(st.spheres).reduce((a, s) => a + (s.actions || 0), 0);
+}
+export function earnedBadges(st) {
+  return BADGES.map(b => ({ ...b, earned: b.has(st) }));
+}
+
 // --- Главный расчёт ---------------------------------------------------------
 
 export function compute(save, now = Date.now()) {
@@ -231,9 +319,14 @@ export function compute(save, now = Date.now()) {
   // Чем ниже жизненная сила ветви, тем медленнее она растёт (от 100% до 50%).
   const growthFactor = (s) => 0.5 + s.health / 200;
 
+  // Суммарный опыт по ходу начисления — чтобы применять бонус «Пути дерева».
+  let runningXp = 0;
+
   const gainXp = (s, amount, t) => {
-    const gained = Math.round(amount * growthFactor(s));
+    const mult = 1 + boostForXp(runningXp);
+    const gained = Math.round(amount * growthFactor(s) * mult);
     s.xp += gained;
+    runningXp += gained;
     s.started = true;
     s.lastActive = t;
     s.decayApplied = 0;
@@ -253,6 +346,7 @@ export function compute(save, now = Date.now()) {
     if (bonus) {
       const extra = Math.round(bonus * growthFactor(s));
       s.xp += extra;
+      runningXp += extra;
       eff.gains[sphereId] = (eff.gains[sphereId] || 0) + extra;
       eff.streak = { days: r.len, bonus: extra };
     }
@@ -411,6 +505,7 @@ export function compute(save, now = Date.now()) {
   return {
     spheres: sp, totalXp, player, stage: stageFor(player.level), streak,
     effects, cleanDays, learned, dayCounts, todayCounts, avgHealth, streaks, subStats,
+    perks: pathPerks(player.level), path: pathTier(player.level),
   };
 }
 

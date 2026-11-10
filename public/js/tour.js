@@ -20,6 +20,7 @@ export const FEATURES = [
   { id: 'sublink', title: ['Время на подветвь засчитывает дело', 'Sub-branch time counts as an activity'] },
   { id: 'feedback', title: ['Можно написать разработчику', 'You can message the developer'] },
   { id: 'reminders', title: ['Напоминания от бота', 'Reminders from the bot'] },
+  { id: 'path', title: ['Путь дерева — карта достижений', 'Tree Path — the achievements map'] },
 ];
 
 // nav — какой экран открыть перед шагом; target — что подсветить
@@ -94,6 +95,10 @@ export const STEPS = [
     title: ['Бот напомнит зайти', 'The bot will remind you'],
     text: ['Если привязан Telegram, бот раз в день напомнит заглянуть в игру и отметить дело. Не хочешь — в настройках есть кнопка «Не напоминать 2 недели», и та же кнопка есть прямо под напоминанием.',
       'If Telegram is linked, the bot reminds you once a day to drop in and log something. Don’t want that? Settings has a “Mute for 2 weeks” button, and so does the reminder itself.'] },
+  { feature: 'path', nav: { tab: 'tree' }, target: '[data-action="open-path"]',
+    title: ['Путь дерева', 'The Tree Path'],
+    text: ['Нажми на уровень вверху — откроется карта достижений. Общий опыт со всех сфер ведёт по вехам, а за них дерево становится пышнее, появляются светлячки, плоды и птицы, открываются новые стили и звания. Внизу — бейджи за особые свершения.',
+      'Tap your level at the top to open the achievements map. Total XP from every area moves you along the path, and milestones make the tree fuller, add fireflies, fruit and birds, and unlock new styles and titles. Badges for special feats are at the bottom.'] },
 ];
 
 const pick = (v) => (Array.isArray(v) ? T(v[0], v[1]) : v);

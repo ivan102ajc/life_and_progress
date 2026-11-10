@@ -609,3 +609,36 @@ p { margin: 0; }
 }
 .linklike:hover { color: var(--fg, inherit); }
 .auth-card h2 { margin: 4px 0 0; font-size: 20px; }
+
+/* Светлячки — украшение дерева на «Пути» */
+@keyframes firefly { 0%,100% { opacity:.25 } 50% { opacity:1 } }
+.firefly { animation: firefly 3s ease-in-out infinite; }
+
+/* Путь дерева: карта достижений */
+.tb-stage { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; text-align: left; }
+.tb-stage:hover .tb-text strong { text-decoration: underline; text-underline-offset: 2px; }
+.path-now { margin: 0 0 8px; }
+.path-bar { height: 10px; border-radius: 99px; background: var(--surface2, #e3e3e3); overflow: hidden; margin: 6px 0; }
+.path-bar > i { display: block; height: 100%; background: var(--accent, #2f7a47); border-radius: 99px; transition: width .4s; }
+.path-map { list-style: none; margin: 14px 0 4px; padding: 0; position: relative; }
+.path-map::before { content: ""; position: absolute; left: 15px; top: 6px; bottom: 6px; width: 2px; background: var(--line, #d8d8d8); }
+.ptier { display: flex; gap: 12px; align-items: flex-start; padding: 7px 0; position: relative; }
+.pnode {
+  flex: none; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--surface2, #e3e3e3); color: var(--muted, #777); font-weight: 700; font-size: 13px;
+  border: 2px solid var(--line, #d8d8d8); z-index: 1;
+}
+.ptier.is-done .pnode { background: var(--accent, #2f7a47); color: #fff; border-color: var(--accent, #2f7a47); }
+.ptier.is-current .pnode { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent, #2f7a47) 30%, transparent); }
+.ptier:not(.is-done) .pbody { opacity: .6; }
+.pbody { padding-top: 3px; }
+.pname { font-weight: 600; }
+.plvl { font-weight: 400; font-size: 12px; color: var(--muted, #777); }
+.rewards { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+.rw { font-size: 12px; background: var(--surface2, #eee); border-radius: 99px; padding: 2px 9px; white-space: nowrap; }
+.rw.muted { opacity: .7; }
+.badges { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; margin: 8px 0 4px; }
+.badge { display: flex; flex-direction: column; align-items: center; gap: 3px; text-align: center; padding: 10px 6px; border-radius: 14px; background: var(--surface2, #eee); opacity: .45; filter: grayscale(1); }
+.badge.is-on { opacity: 1; filter: none; }
+.badge .bi { font-size: 24px; line-height: 1; }
+.badge .bn { font-size: 11px; line-height: 1.2; }
