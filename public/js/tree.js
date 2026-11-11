@@ -135,7 +135,8 @@ export function renderTree(state, theme, { selected = null, reduceMotion = false
   const level = state.player.level;
   const g = clamp(level / 30, 0, 1);
   // Молодое дерево показываем крупнее: «камера» приближается, а по мере роста отъезжает.
-  const vbW = lerp(330, W, Math.sqrt(clamp(level / 24, 0, 1)));
+  // Камера отъезжает вместе с ростом дерева, чтобы оно всегда занимало кадр.
+  const vbW = lerp(330, W, Math.pow(clamp(level / 26, 0, 1), 0.8));
   const vbH = vbW * H / W;
   const vbX = CX - vbW / 2;
   const vbY = H - vbH;
@@ -213,6 +214,7 @@ export function renderTree(state, theme, { selected = null, reduceMotion = false
   }
 
   // --- ветви по сферам ---
+  const foliage = [];   // точки кроны: к ним крепятся украшения «Пути дерева»
   SPHERES.forEach((sphere, i) => {
     const s = state.spheres[sphere.id];
     const a = ANGLES[i] * Math.PI / 180;
@@ -300,6 +302,7 @@ export function renderTree(state, theme, { selected = null, reduceMotion = false
       const p = bez(...curve, 0.5 + k * 0.17);
       anchors.push({ x: p.x, y: p.y, w: 0.8 });
     }
+    for (const an of anchors) foliage.push({ x: an.x, y: an.y, r: 8 + s.level * 0.7 });
 
     // Листья
     const count = clamp(5 + s.level * 3 + s.unlocked.length * 2, 5, 48);
@@ -345,33 +348,58 @@ export function renderTree(state, theme, { selected = null, reduceMotion = false
   });
 
   // --- Украшения «Пути дерева»: открываются по мере прохождения вех ---
+  // Всё крепится к настоящей кроне (точкам foliage), поэтому на маленьком
+  // дереве украшений мало и они сидят на ветках, а не висят в небе.
   const perks = state.perks || { growth: 0, decor: new Set() };
-  const hasDecor = (d) => perks.decor && typeof perks.decor.has === 'function' && perks.decor.has(d);
+  const hasDecor = (d) => foliage.length > 0 && perks.decor && typeof perks.decor.has === 'function' && perks.decor.has(d);
   const decorBack = []; const decorFront = [];
-  const kk = vbW / W;                       // масштаб под текущее приближение камеры
-  const canTop = vy(0.10); const canBot = vy(0.52); const canW = vbW * 0.62;
   const dr = rng(321);
-  const spot = () => {
-    const a = dr() * Math.PI * 2; const rr = Math.sqrt(dr());
-    return [CX + Math.cos(a) * canW / 2 * rr, lerp(canTop, canBot, dr())];
+  // В стилях без общей палитры (неон) листья красятся в цвета сфер.
+  const decorLeaves = T.leaves || SPHERES.map(sp => sp.color);
+  const spot = (spread = 1) => {
+    const an = foliage[Math.floor(dr() * foliage.length)];
+    const th = dr() * Math.PI * 2; const rad = dr() * an.r * spread;
+    return [an.x + Math.cos(th) * rad, an.y + Math.sin(th) * rad * 0.85];
   };
+  const some = (base, perAnchor, max) => Math.round(clamp(base + foliage.length * perAnchor, 0, max));
   if (hasDecor('aura')) {
+    const xs = foliage.map(p => p.x); const ys = foliage.map(p => p.y);
+    const x0 = Math.min(...xs); const x1 = Math.max(...xs); const y0 = Math.min(...ys); const y1 = Math.max(...ys);
     defs.push('<radialGradient id="aura"><stop offset="0" stop-color="#FFF6C8" stop-opacity=".5"/><stop offset="1" stop-color="#FFF6C8" stop-opacity="0"/></radialGradient>');
-    decorBack.push(`<ellipse cx="${r1(CX)}" cy="${r1(lerp(canTop, canBot, 0.42))}" rx="${r1(canW * 0.8)}" ry="${r1((canBot - canTop) * 0.8)}" fill="url(#aura)"/>`);
+    decorBack.push(`<ellipse cx="${r1((x0 + x1) / 2)}" cy="${r1((y0 + y1) / 2)}" rx="${r1((x1 - x0) / 2 + 50)}" ry="${r1((y1 - y0) / 2 + 45)}" fill="url(#aura)"/>`);
   }
-  if (!pixel && hasDecor('blossom')) {
-    for (let i = 0; i < 8; i++) { const [x, y] = spot(); decorFront.push(`<circle cx="${r1(x)}" cy="${r1(y)}" r="${r1(3 * kk + 1.5)}" fill="#FBD7E6" opacity=".9"/>`); }
+  // Пышность: дополнительные листья в кроне за пройденные вехи.
+  for (let i = 0, n = some(0, perks.growth * 0.12, 60); i < n; i++) {
+    const [x, y] = spot();
+    decorFront.push(leafShape(T.leafShape || 'leaf', 7 + dr() * 3, decorLeaves[i % decorLeaves.length], x, y, dr() * 360, pixel));
   }
-  if (!pixel && hasDecor('fruits')) {
-    for (let i = 0; i < 6 + perks.growth; i++) { const [x, y] = spot(); decorFront.push(`<circle cx="${r1(x)}" cy="${r1(y)}" r="${r1(4 * kk + 2)}" fill="${T.fruit}" stroke="rgba(0,0,0,.15)"/>`); }
+  if (hasDecor('blossom')) {
+    for (let i = 0, n = some(2, 0.12, 14); i < n; i++) {
+      const [x, y] = spot();
+      decorFront.push(pixel
+        ? `<rect x="${r1(x - 2)}" y="${r1(y - 2)}" width="4" height="4" fill="#FBD7E6"/>`
+        : `<g transform="translate(${r1(x)} ${r1(y)})"><circle r="3.4" fill="#FBD7E6"/><circle r="1.3" fill="#F6B93B"/></g>`);
+    }
   }
-  // Пышность: немного дополнительных листьев в кроне за пройденные вехи.
-  for (let i = 0; !pixel && i < perks.growth * 2; i++) { const [x, y] = spot(); decorFront.push(leafShape(T.leafShape || 'leaf', 7, T.leaves[i % T.leaves.length], x, y, dr() * 360, false)); }
-  if (!pixel && hasDecor('fireflies')) {
-    for (let i = 0; i < 12; i++) { const [x, y] = spot(); const delay = (dr() * 3).toFixed(1); decorFront.push(`<circle cx="${r1(x)}" cy="${r1(y)}" r="${r1(1.8 * kk + 1)}" fill="#FFE98A"${reduceMotion ? '' : ` class="firefly" style="animation-delay:-${delay}s"`}/>`); }
+  if (hasDecor('butterflies') && !pixel) {
+    const cols = ['#F6A5C0', '#9AD0F5', '#FFD27A'];
+    for (let i = 0, n = some(1, 0.03, 4); i < n; i++) {
+      const [x, y] = spot(1.8);
+      const c = cols[i % cols.length];
+      decorFront.push(`<g transform="translate(${r1(x)} ${r1(y - 6)}) rotate(${r1(dr() * 40 - 20)})"${reduceMotion ? '' : ` class="butterfly" style="animation-delay:-${(dr() * 2).toFixed(1)}s"`}><ellipse cx="-3" cy="0" rx="3.4" ry="2.4" fill="${c}"/><ellipse cx="3" cy="0" rx="3.4" ry="2.4" fill="${c}"/><rect x="-.5" y="-2" width="1" height="4" rx=".5" fill="#4a3b2a"/></g>`);
+    }
+  }
+  if (hasDecor('fireflies') && !pixel) {
+    for (let i = 0, n = some(3, 0.12, 14); i < n; i++) {
+      const [x, y] = spot(2.2);
+      decorFront.push(`<circle cx="${r1(x)}" cy="${r1(y)}" r="1.9" fill="#FFE98A"${reduceMotion ? '' : ` class="firefly" style="animation-delay:-${(dr() * 3).toFixed(1)}s"`}/>`);
+    }
   }
   if (hasDecor('birds')) {
-    for (let i = 0; i < 3; i++) { const bx = vx(0.2 + i * 0.28); const by = vy(0.1 + (i % 2) * 0.05); const s = 4 * kk + 3; decorFront.push(`<path d="M${r1(bx - s)} ${r1(by)} Q${r1(bx - s / 2)} ${r1(by - s / 2)} ${r1(bx)} ${r1(by)} Q${r1(bx + s / 2)} ${r1(by - s / 2)} ${r1(bx + s)} ${r1(by)}" fill="none" stroke="${pixel ? T.trunkShade : '#3a3a3a'}" stroke-width="${r1(1.4 * kk + 0.6)}" stroke-linecap="round"/>`); }
+    for (let i = 0; i < 3; i++) {
+      const bx = vx(0.16 + i * 0.13); const by = vy(0.1 + (i % 2) * 0.045); const sz = 8 - i * 1.5;
+      decorBack.push(`<path d="M${r1(bx - sz)} ${r1(by)} Q${r1(bx - sz / 2)} ${r1(by - sz)} ${r1(bx)} ${r1(by)} Q${r1(bx + sz / 2)} ${r1(by - sz)} ${r1(bx + sz)} ${r1(by)}" fill="none" stroke="${T.trunkShade}" stroke-width="1.5" stroke-linecap="round" opacity=".7"/>`);
+    }
   }
 
   return `<svg viewBox="${r1(vbX)} ${r1(vbY)} ${r1(vbW)} ${r1(vbH)}" xmlns="http://www.w3.org/2000/svg" class="tree-svg${pixel ? ' is-pixel' : ''}"${pixel ? ' shape-rendering="crispEdges"' : ''} role="img" aria-label="${tt('Твоё дерево', 'Your tree')}: ${nm(state.stage)}, ${tt('уровень', 'level')} ${level}">

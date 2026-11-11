@@ -15,7 +15,7 @@ import { T, name as nm, plural, locale, setLang, getLang, detectLang, formatMinu
 import { api, auth } from './api.js';
 import { mergeSaves, sameSave } from './sync.js';
 import { planTour, runTour, tourActive, tourBack } from './tour.js';
-import { installErrorReporting } from './report.js';
+import { installErrorReporting, reportError } from './report.js';
 
 installErrorReporting();
 
@@ -31,6 +31,7 @@ const ui = {
   tab: 'tree',
   selected: null,
   logDay: 0,            // 0 — сегодня, 1 — вчера
+  histLimit: 40,        // сколько отметок показано в «Истории»
   filter: 'all',
   skillSphere: 'health',
   matSphere: 'all',
@@ -139,7 +140,9 @@ async function loadGame() {
   showScreen('loading');
   try {
     const res = await api.load();
+    if (res.token) auth.token = res.token;
     ui.user = res.user;
+    try { localStorage.setItem('tol_user', JSON.stringify(res.user)); } catch { /* приватный режим */ }
     const cached = readLocal(res.user.id);
     // Складываем версию с сервера и несохранённую версию с этого устройства.
     const server = res.data ? normalizeSave(res.data, res.user.name) : null;
@@ -156,9 +159,28 @@ async function loadGame() {
     if (err.status === 401) {
       auth.token = null;
       showAuth();
-    } else {
-      showScreen('error', err.message);
+      return;
     }
+    // Нет связи или сервер недоступен: открываем игру из сохранения на этом
+    // устройстве. Отметки не пропадут — уйдут на сервер, когда связь вернётся.
+    let lastUser = null;
+    try { lastUser = JSON.parse(localStorage.getItem('tol_user') || 'null'); } catch { /* нет данных */ }
+    const cached = lastUser ? readLocal(lastUser.id) : null;
+    if (cached?.save && (err.offline || err.status >= 500)) {
+      ui.user = lastUser;
+      ui.save = normalizeSave(cached.save, lastUser.name);
+      if (ui.save.lang && ui.save.lang !== getLang()) { setLang(ui.save.lang); applyStaticTexts(); }
+      showScreen('game');
+      render();
+      setSync('offline', err.message);
+      clearTimeout(retryTimer);
+      retryTimer = setTimeout(syncNow, 15000);
+      toast(T('Нет связи — играешь офлайн. Отметки сохранятся и отправятся позже.', 'No connection — playing offline. Entries are kept and will sync later.'), 'info');
+      return;
+    }
+    // Ошибка не из-за связи — значит, сломалось что-то в самой игре: сообщаем разработчику.
+    if (!err.offline && !err.status) reportError(err.message, 'loadGame', err.stack);
+    showScreen('error', err.offline || err.status ? err.message : T('Не получилось открыть игру. Мы уже получили отчёт об ошибке — попробуй ещё раз чуть позже.', 'Couldn’t open the game. We’ve received an error report — please try again a bit later.'));
   }
 }
 
@@ -188,7 +210,7 @@ function applyStaticTexts() {
   document.title = T('Древо жизни', 'Tree of Life');
   const desc = document.querySelector('meta[name="description"]');
   if (desc) desc.setAttribute('content', T('Игра для саморазвития: реальные полезные дела растят твоё дерево, а вредные привычки заставляют листья желтеть.', 'A self-improvement game: real useful activities grow your tree, bad habits turn its leaves yellow.'));
-  const tabs = { tree: T('Дерево', 'Tree'), log: T('Отметить', 'Log'), goals: T('Цели', 'Goals'), skills: T('Навыки', 'Skills'), materials: T('Материалы', 'Resources'), history: T('История', 'History') };
+  const tabs = { tree: T('Дерево', 'Tree'), log: T('Отметить', 'Log'), goals: T('Цели', 'Goals'), skills: T('Развитие', 'Growth'), history: T('История', 'History') };
   for (const [tab, label] of Object.entries(tabs)) {
     const span = document.querySelector(`#tabs [data-tab="${tab}"] span`);
     if (span) span.textContent = label;
@@ -248,7 +270,7 @@ function grantChip(g) {
   if (g.style) { const th = THEME_BY_ID[g.style]; return `🎨 ${T('Стиль', 'Style')} «${th ? nm(th) : g.style}»`; }
   const d = {
     blossom: ['🌸', ['Цветение', 'Blossom']], fireflies: ['✨', ['Светлячки', 'Fireflies']],
-    fruits: ['🍎', ['Плоды', 'Fruit']], birds: ['🐦', ['Птицы', 'Birds']], aura: ['🌟', ['Сияние кроны', 'Radiant glow']],
+    butterflies: ['🦋', ['Бабочки', 'Butterflies']], birds: ['🐦', ['Птицы', 'Birds']], aura: ['🌟', ['Сияние кроны', 'Radiant glow']],
   }[g.decor];
   return d ? `${d[0]} ${T(d[1][0], d[1][1])}` : '';
 }
@@ -271,8 +293,9 @@ function openPath() {
     </li>`;
   }).join('');
   const badgeHtml = earnedBadges(st).map(b => `
-    <div class="badge${b.earned ? ' is-on' : ''}" title="${esc(T(b.desc[0], b.desc[1]))}">
-      <span class="bi">${b.icon}</span><span class="bn">${esc(T(b.name[0], b.name[1]))}</span>
+    <div class="badge${b.earned ? ' is-on' : ''}">
+      <span class="bi">${b.icon}</span>
+      <span class="bt"><strong>${esc(T(b.name[0], b.name[1]))}</strong><small>${b.earned ? '✓ ' + T('получено', 'earned') : esc(T(b.desc[0], b.desc[1]))}</small></span>
     </div>`).join('');
   const toNext = cur.next ? T(`До «${tierName(cur.next)}» — ещё ${p.need - p.into} опыта`, `${p.need - p.into} XP to “${tierName(cur.next)}”`) : T('Вершина пути достигнута 🌳', 'You’ve reached the summit 🌳');
   openSheet(`
@@ -413,6 +436,7 @@ function queueSync() {
 }
 async function syncNow() {
   clearTimeout(retryTimer);
+  if (!ui.save || !auth.token) return;
   try {
     const res = await api.save(ui.save);
     // Сервер вернул общую версию — с изменениями с других устройств.
@@ -507,6 +531,7 @@ function reportChange(before, after, e) {
   if (losses.length) {
     toast(T('Листья желтеют: ', 'Leaves are turning yellow: ') + losses.map(([sid, v]) => `${nm(SPHERE_BY_ID[sid])} −${v}`).join(', '), 'bad');
   }
+  if (eff.rest) toast(T('😮‍💨 Вчера был день отдыха — огонёк сохранён', '😮‍💨 Yesterday was a rest day — your streak is safe'), 'info');
   if (eff.streak) {
     const label = e.k === 'time' ? findSub(ui.save, e.ref)?.name : nm(findAction(ui.save, e.ref));
     toast(T(`🔥 ${eff.streak.days} ${daysWord(eff.streak.days)} подряд: «${label}». Бонус +${eff.streak.bonus}`, `🔥 ${eff.streak.days} ${daysWord(eff.streak.days)} in a row: “${label}”. Bonus +${eff.streak.bonus}`), 'level');
@@ -514,10 +539,39 @@ function reportChange(before, after, e) {
     const k = after.streaks[e.ref];
     if (k && k.days >= 2 && after.effects[e.id]?.repeat === 0) toast(T(`🔥 Огонёк: ${k.days} ${daysWord(k.days)} подряд`, `🔥 Streak: ${k.days} ${daysWord(k.days)} in a row`), 'info');
   }
-  if (after.player.level > before.player.level) toast(T(`Общий уровень ${after.player.level}!`, `Overall level ${after.player.level}!`), 'level');
-  if (after.stage.name !== before.stage.name && after.player.level > before.player.level) {
-    toast(T(`Новая стадия: ${nm(after.stage)}`, `New stage: ${nm(after.stage)}`), 'level');
+  if (after.path.index > before.path.index) {
+    // Новая веха «Пути дерева» — отдельное поздравление вместо пачки уведомлений.
+    const tier = after.path.tier;
+    setTimeout(() => celebrateTier(tier), 700);
+  } else if (after.player.level > before.player.level) {
+    toast(T(`Общий уровень ${after.player.level}!`, `Overall level ${after.player.level}!`), 'level');
   }
+}
+
+// Поздравление с новой вехой: что открылось и немного конфетти.
+function celebrateTier(tier) {
+  if (!ui.save || tourActive() || !$('#sheet').hidden) {
+    toast(T(`Новая веха: ${tierName(tier)}`, `New milestone: ${tierName(tier)}`), 'level');
+    return;
+  }
+  hideSnack();
+  const chips = tier.grants.map(grantChip).filter(Boolean).map(c => `<span class="rw">${c}</span>`).join('');
+  const colors = ['#F6B93B', '#F07B3F', '#4CAF7A', '#5B8DEF', '#F06292', '#9B7BFF'];
+  const confetti = reduceMotion ? '' : `<div class="confetti" aria-hidden="true">${Array.from({ length: 28 }, (_, i) =>
+    `<i style="left:${(i * 37) % 100}%;background:${colors[i % colors.length]};animation-delay:${(i % 7) * 0.09}s;animation-duration:${1.6 + (i % 5) * 0.25}s"></i>`).join('')}</div>`;
+  openSheet(`
+    ${confetti}
+    <div class="celebrate">
+      <div class="celebrate-badge">${tier.level}</div>
+      <p class="celebrate-kicker">${T('Новая веха Пути дерева', 'New Tree Path milestone')}</p>
+      <h2>${esc(tierName(tier))}</h2>
+      ${chips ? `<p>${T('Открылось:', 'Unlocked:')}</p><div class="rewards center">${chips}</div>` : ''}
+    </div>
+    <div class="sheet-actions stack">
+      <button class="btn btn-primary" data-action="close-sheet">${T('Отлично!', 'Awesome!')}</button>
+      <button class="btn btn-ghost" data-action="open-path">${T('Посмотреть весь путь', 'See the whole path')}</button>
+    </div>`);
+  haptic('success');
 }
 
 function pulse(sphereId) {
@@ -558,6 +612,7 @@ function streaksBlock(st) {
     const next = nextMilestone(k.days);
     let status;
     if (k.status === 'lit') status = T('Горит: сегодня уже сделано', 'Lit: done today');
+    else if (k.rest) status = T('Вчера был день отдыха. Сделай сегодня — иначе огонёк погаснет', 'Yesterday was a rest day. Do it today or the streak goes out');
     else if (k.status === 'risk') status = T('Сделай сегодня, иначе огонёк погаснет', 'Do it today or the streak goes out');
     else status = k.best ? T(`Погас. Рекорд: ${k.best} ${daysWord(k.best)}`, `Out. Best: ${k.best} ${daysWord(k.best)}`) : T('Ещё не зажжён — начни сегодня', 'Not lit yet — start today');
     const goal = next ? `<small class="muted">${T(`До бонуса +${STREAK_MILESTONES[next]}: ещё ${next - k.days} ${daysWord(next - k.days)}`, `Bonus +${STREAK_MILESTONES[next]} in ${next - k.days} ${daysWord(next - k.days)}`)}</small>` : '';
@@ -581,11 +636,11 @@ function streaksBlock(st) {
 
   return `<section id="streaks-block" class="streaks-block">
     <div class="panel-head">
-      <h2>${T('Огоньки', 'Streaks')}</h2>
-      <p class="muted">${T('Делай одно и то же дело несколько дней подряд — загорится огонёк. На 3, 7, 14, 30, 60 и 100 день — бонус опыта. Пропустил день — огонёк гаснет.', 'Do the same thing several days in a row and a streak lights up. Day 3, 7, 14, 30, 60 and 100 give bonus XP. Miss a day and it goes out.')}</p>
+      <h3>🔥 ${T('Огоньки', 'Streaks')}</h3>
+      <button class="btn btn-small" data-action="add-tracker">＋ ${T('Следить', 'Track')}</button>
+      ${cards ? '' : `<p class="muted">${T('Делай одно и то же дело несколько дней подряд — загорится огонёк. На 3, 7, 14, 30, 60 и 100 день — бонус опыта. Огонёк от 7 дней прощает один пропуск в неделю — день отдыха.', 'Do the same thing several days in a row and a streak lights up. Day 3, 7, 14, 30, 60 and 100 give bonus XP. Miss a day and it goes out.')}</p>`}
     </div>
     ${cards ? `<div class="tracker-list">${cards}</div>` : ''}
-    <button class="btn btn-ghost btn-wide" data-action="add-tracker">${T('Следить за огоньком', 'Track a streak')}</button>
   </section>`;
 }
 
@@ -593,6 +648,7 @@ function render() {
   const theme = THEME_BY_ID[ui.save.theme] || THEME_BY_ID.spring;
   applyTheme(theme);
   ui.state = compute(ui.save);
+  ui.renderedDay = dayKey(Date.now());
   const st = ui.state;
 
   if (ui.zoom && ui.tab !== 'tree') ui.zoom = null;
@@ -611,7 +667,7 @@ function render() {
   tree.dataset.view = ui.zoom ? 'branch:' + ui.zoom : 'tree';
   $('#scene-caption').innerHTML = sceneCaption(st);
   for (const b of document.querySelectorAll('#tabs [data-tab]')) {
-    b.setAttribute('aria-current', b.dataset.tab === ui.tab ? 'page' : 'false');
+    b.setAttribute('aria-current', b.dataset.tab === ui.tab || (b.dataset.tab === 'skills' && ui.tab === 'materials') ? 'page' : 'false');
   }
   // Точка на вкладке «Цели», если есть награда, которую можно забрать.
   const readyGoal = activeGoals().some(g => { const p = goalProgress(ui.save, st, g); return g.kind !== 'custom' && p.done && !p.claimed; });
@@ -671,6 +727,55 @@ function healthWord(h) {
 }
 
 // --- Вкладка «Дерево» ---
+// Блок «Сегодня»: что уже сделано и что стоит сделать — ежедневный ориентир.
+function todayCard(st) {
+  if (st.totalXp === 0) return '';
+  const today = dayKey(Date.now());
+  let count = 0; let xp = 0;
+  for (const e of ui.save.events) {
+    if (dayKey(e.t) !== today) continue;
+    const eff = st.effects[e.id];
+    if (!eff?.valid || e.k === 'bad') continue;
+    count++;
+    for (const v of Object.values(eff.gains)) xp += v;
+  }
+  const tips = [];
+  // 1. Награды за цели, которые уже можно забрать.
+  for (const g of activeGoals()) {
+    const p = goalProgress(ui.save, st, g);
+    if (g.kind !== 'custom' && p.done && !p.claimed) tips.push({ icon: '🎁', text: T(`Цель выполнена: ${g.title}`, `Goal complete: ${g.title}`), btn: T('Забрать', 'Claim'), attrs: `data-action="goal-claim" data-id="${g.id}"` });
+  }
+  // 2. Огоньки, которые погаснут, если сегодня не сделать.
+  const risk = Object.entries(st.streaks).filter(([id, k]) => k.status === 'risk' && (k.days >= 3 || (k.days >= 1 && ui.save.tracked.includes(id)))).sort((a, b) => b[1].days - a[1].days);
+  for (const [id, k] of risk.slice(0, 2)) {
+    const a = findAction(ui.save, id);
+    if (a && !a.archived) tips.push({ icon: '🔥', text: k.rest ? T(`${nm(a)} — огонёк ${k.days} ${daysWord(k.days)} держится на дне отдыха, сегодня последний шанс`, `${nm(a)} — ${k.days}-day streak is on its rest day, today is the last chance`) : T(`${nm(a)} — огонёк ${k.days} ${daysWord(k.days)}, не дай погаснуть`, `${nm(a)} — ${k.days}-day streak, keep it alive`), btn: T('Сделал', 'Done'), attrs: `data-action="log-act" data-id="${a.id}" data-today="1"` });
+  }
+  // 3. Цели на неделю/месяц, до которых осталось немного.
+  for (const g of activeGoals()) {
+    if (tips.length >= 3) break;
+    const p = goalProgress(ui.save, st, g);
+    if (g.kind === 'custom' || g.kind === 'level' || p.done || p.claimed) continue;
+    const left = p.target - p.value;
+    tips.push({ icon: '🎯', text: `${g.title}: ${T('осталось', 'left')} ${g.kind === 'time' ? formatMinutes(left) : left}`, btn: T('К целям', 'Goals'), attrs: 'data-action="tab" data-tab="goals"' });
+  }
+  // 4. Ветвь, которая давно без внимания.
+  if (tips.length < 3) {
+    const dry = SPHERES.map(sp => ({ sp, s: st.spheres[sp.id] })).filter(x => x.s.started && x.s.idleDays > RULES.idleGraceDays).sort((a, b) => b.s.idleDays - a.s.idleDays)[0];
+    if (dry) tips.push({ icon: dry.sp.icon, text: T(`«${nm(dry.sp)}» без внимания ${dry.s.idleDays} дн. — ветвь сохнет`, `${nm(dry.sp)} has had no attention for ${dry.s.idleDays} d — it’s drying out`), btn: T('Полить', 'Water'), attrs: `data-action="log-sphere" data-sphere="${dry.sp.id}"` });
+  }
+  const head = count
+    ? T(`Сегодня: ${count} ${plural(count, ['дело', 'дела', 'дел'], ['activity', 'activities'])} · +${xp} опыта`, `Today: ${count} ${plural(count, ['дело', 'дела', 'дел'], ['activity', 'activities'])} · +${xp} XP`)
+    : T('Сегодня ещё ничего не отмечено', 'Nothing logged today yet');
+  const list = tips.slice(0, 3).map(t => `
+    <li><span class="td-icon">${t.icon}</span><span class="td-text">${esc(t.text)}</span><button class="btn btn-small" ${t.attrs}>${t.btn}</button></li>`).join('');
+  return `
+    <section class="today${count ? ' has-done' : ''}">
+      <div class="today-head"><strong>${head}</strong>${count ? '' : `<button class="btn btn-small btn-primary" data-action="tab" data-tab="log">${T('Отметить', 'Log')}</button>`}</div>
+      ${list ? `<ul class="today-list">${list}</ul>` : count ? `<p class="muted small">${T('Всё под контролем: огоньки горят, ветви политы.', 'All good: streaks are lit and branches are watered.')}</p>` : ''}
+    </section>`;
+}
+
 function panelTree(st) {
   const started = SPHERES.filter(s => st.spheres[s.id].started).length;
   const intro = st.totalXp === 0 ? `
@@ -694,6 +799,7 @@ function panelTree(st) {
   }).join('');
   return `
     ${intro}
+    ${todayCard(st)}
     <div class="panel-head">
       <h2>${T('Ветви', 'Branches')}</h2>
       <p class="muted">${T(`${started} из ${SPHERES.length} сфер растут · ${st.totalXp} опыта всего`, `${started} of ${SPHERES.length} areas growing · ${st.totalXp} XP in total`)}</p>
@@ -744,15 +850,31 @@ function panelLog(st) {
       </button>`;
   }).join('');
 
+  // Быстрые отметки: то, что игрок отмечает чаще всего за последний месяц.
+  const freq = {};
+  for (const e of ui.save.events) if (e.k === 'act' && e.t > Date.now() - 30 * DAY) freq[e.ref] = (freq[e.ref] || 0) + 1;
+  const quick = Object.entries(freq).filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]).slice(0, 5)
+    .map(([id]) => findAction(ui.save, id)).filter(a => a && !a.archived);
+  const quickHtml = quick.length >= 2 ? `
+    <div class="quick">
+      <h3>${T('Часто отмечаешь', 'Your usual')}</h3>
+      <div class="quick-list">${quick.map(a => {
+        const n = countOnDay(st, a.id, t);
+        return `<button class="quick-btn${n ? ' is-done' : ''}" data-action="log-act" data-id="${a.id}" style="--c:${SPHERE_BY_ID[a.sphere].color}"><span>${SPHERE_BY_ID[a.sphere].icon}</span>${esc(nm(a))}${n ? ' ✓' : ''}</button>`;
+      }).join('')}</div>
+    </div>` : '';
+
   return `
-    ${streaksBlock(st)}
-    <div class="panel-head spaced">
+    <div class="panel-head">
       <h2>${T('Что ты сделал?', 'What did you do?')}</h2>
       <div class="segmented small">
         <button aria-selected="${ui.logDay === 0}" data-action="log-day" data-day="0">${T('Сегодня', 'Today')}</button>
         <button aria-selected="${ui.logDay === 1}" data-action="log-day" data-day="1">${T('Вчера', 'Yesterday')}</button>
       </div>
     </div>
+    ${quickHtml}
+    ${streaksBlock(st)}
+    <h3 class="list-title">${T('Все дела', 'All activities')}</h3>
     <div class="chips">${chips}</div>
     <div class="act-list">${actHtml || `<p class="muted">${T('Здесь пока пусто.', 'Nothing here yet.')}</p>`}</div>
     <button class="btn btn-ghost btn-wide" data-action="custom-act">${T('Добавить своё дело', 'Add your own activity')}</button>
@@ -1061,6 +1183,10 @@ function panelSkills(st) {
   }).join('');
 
   return `
+    <div class="segmented grow-switch">
+      <button aria-selected="${ui.tab === 'skills'}" data-action="tab" data-tab="skills">${T('Навыки', 'Skills')}</button>
+      <button aria-selected="${ui.tab === 'materials'}" data-action="tab" data-tab="materials">${T('Материалы', 'Resources')}</button>
+    </div>
     <div class="panel-head">
       <h2>${T('Навыки', 'Skills')}</h2>
       <p class="muted">${T('Каждый освоенный навык — новая веточка с плодом. Отмечай, только когда действительно получилось.', 'Every mastered skill is a new twig with fruit. Only mark it when you’ve really done it.')}</p>
@@ -1097,6 +1223,10 @@ function panelMaterials(st) {
       </article>`;
   }).join('');
   return `
+    <div class="segmented grow-switch">
+      <button aria-selected="${ui.tab === 'skills'}" data-action="tab" data-tab="skills">${T('Навыки', 'Skills')}</button>
+      <button aria-selected="${ui.tab === 'materials'}" data-action="tab" data-tab="materials">${T('Материалы', 'Resources')}</button>
+    </div>
     <div class="panel-head">
       <h2>${T('Материалы', 'Resources')}</h2>
       <p class="muted">${T('Книги, курсы и сайты, которые помогут прокачать каждую ветвь.', 'Books, courses and websites to help each branch grow.')}</p>
@@ -1130,18 +1260,23 @@ function panelHistory(st) {
   const notes = ui.save.events.filter(hasNote).length;
   const head = `
     <div class="panel-head">
-      <h2>${ui.histMode === 'diary' ? T('Дневник', 'Journal') : T('История', 'History')}</h2>
-      <div class="segmented small">
+      <h2>${ui.histMode === 'diary' ? T('Дневник', 'Journal') : ui.histMode === 'stats' ? T('Итоги', 'Summary') : T('История', 'History')}</h2>
+      <div class="segmented small hist-switch">
         <button aria-selected="${ui.histMode === 'all'}" data-action="hist-mode" data-mode="all">${T('Отметки', 'Entries')}</button>
         <button aria-selected="${ui.histMode === 'diary'}" data-action="hist-mode" data-mode="diary">${T('Дневник', 'Journal')}${notes ? ` · ${notes}` : ''}</button>
+        <button aria-selected="${ui.histMode === 'stats'}" data-action="hist-mode" data-mode="stats">${T('Итоги', 'Summary')}</button>
       </div>
-      <p class="muted">${ui.histMode === 'diary'
+      <p class="muted">${ui.histMode === 'stats'
+        ? T('Как ты растёшь: активность по дням, сравнение недель и баланс сфер.', 'How you’re growing: activity by day, week-over-week and the balance of your areas.')
+        : ui.histMode === 'diary'
         ? T('Твои заметки к делам: что получилось, что мешало, какие мысли. Добавить заметку можно сразу после отметки или кнопкой ✎ в отметках.', 'Your notes on activities: what worked, what got in the way, your thoughts. Add a note right after logging or with the ✎ button in entries.')
         : T('Понял, что был не так хорош, как отметил? Отмени — дерево пересчитается честно. Кнопка ✎ — заметка к делу.', 'Realised you logged more than you did? Undo it — the tree recalculates honestly. The ✎ button adds a note.')}</p>
     </div>`;
   if (ui.histMode === 'diary') return head + panelDiary(st);
+  if (ui.histMode === 'stats') return head + panelStats(st);
 
-  const events = [...ui.save.events].sort((a, b) => b.t - a.t).slice(0, 200);
+  const total = ui.save.events.length;
+  const events = [...ui.save.events].sort((a, b) => b.t - a.t).slice(0, ui.histLimit);
   if (!events.length) {
     return head + `<div class="callout"><p>${T('Здесь будут все твои отметки. Любую можно отменить, если понял, что поторопился.', 'All your entries will appear here. You can undo any of them if you were too quick.')}</p>
       <button class="btn btn-primary" data-action="tab" data-tab="log">${T('Отметить первое дело', 'Log your first activity')}</button></div>`;
@@ -1171,7 +1306,73 @@ function panelHistory(st) {
         </span>
       </div>`;
   }
-  return head + `<div class="hist-list">${html}</div>`;
+  const more = total > events.length
+    ? `<button class="btn btn-ghost btn-wide" data-action="hist-more">${T(`Показать ещё (осталось ${total - events.length})`, `Show more (${total - events.length} left)`)}</button>` : '';
+  return head + `<div class="hist-list">${html}</div>${more}`;
+}
+
+// Итоги: активность по дням, сравнение недель, баланс сфер.
+function panelStats(st) {
+  const now = Date.now();
+  const dayXp = {}; const sphereXp = {}; let actions = 0;
+  for (const e of ui.save.events) {
+    const eff = st.effects[e.id];
+    if (!eff?.valid || e.k === 'bad') continue;
+    let xp = 0;
+    for (const [sid, v] of Object.entries(eff.gains)) { xp += v; if (e.t > now - 30 * DAY) sphereXp[sid] = (sphereXp[sid] || 0) + v; }
+    const k = dayKey(e.t);
+    dayXp[k] = (dayXp[k] || 0) + xp;
+    if (e.k !== 'goal') actions++;
+  }
+  if (!actions) {
+    return `<div class="callout"><p>${T('Итоги появятся после первых отметок.', 'Your summary appears after the first entries.')}</p>
+      <button class="btn btn-primary" data-action="tab" data-tab="log">${T('Отметить первое дело', 'Log your first activity')}</button></div>`;
+  }
+  const sumDays = (from, n) => { let x = 0; let active = 0; for (let i = 0; i < n; i++) { const v = dayXp[dayKey(now - (from + i) * DAY)] || 0; x += v; if (v) active++; } return { x, active }; };
+  const w0 = sumDays(0, 7); const w1 = sumDays(7, 7);
+  const diff = w1.x ? Math.round((w0.x - w1.x) / w1.x * 100) : null;
+  const trend = diff === null ? T('первая неделя', 'first week') : diff >= 0 ? `▲ +${diff}% ${T('к прошлой', 'vs last')}` : `▼ ${diff}% ${T('к прошлой', 'vs last')}`;
+  const best = Math.max(0, ...Object.values(st.streaks).map(r => r.best || 0));
+
+  // Календарь активности: 15 недель, столбец — неделя, сверху понедельник.
+  const WEEKS = 15;
+  const today = new Date(); today.setHours(12, 0, 0, 0);
+  const dow = (today.getDay() + 6) % 7;
+  const start = today.getTime() - (dow + (WEEKS - 1) * 7) * DAY;
+  const vals = Object.values(dayXp).filter(Boolean).sort((a, b) => a - b);
+  const q = (p) => vals[Math.min(vals.length - 1, Math.floor(vals.length * p))] || 1;
+  const lvl = (v) => (!v ? 0 : v <= q(0.25) ? 1 : v <= q(0.5) ? 2 : v <= q(0.8) ? 3 : 4);
+  let cells = '';
+  for (let w = 0; w < WEEKS; w++) {
+    for (let d = 0; d < 7; d++) {
+      const t = start + (w * 7 + d) * DAY;
+      if (t > today.getTime()) { cells += '<i class="hm-cell is-future"></i>'; continue; }
+      const v = dayXp[dayKey(t)] || 0;
+      const label = `${new Date(t).toLocaleDateString(locale(), { day: 'numeric', month: 'short' })}: ${v ? '+' + v + ' ' + T('опыта', 'XP') : T('пусто', 'nothing')}`;
+      cells += `<i class="hm-cell l${lvl(v)}" title="${label}" data-action="hm-day" data-label="${label}"></i>`;
+    }
+  }
+  const maxS = Math.max(1, ...SPHERES.map(sp => sphereXp[sp.id] || 0));
+  const weakest = SPHERES.filter(sp => st.spheres[sp.id].started).sort((a, b) => (sphereXp[a.id] || 0) - (sphereXp[b.id] || 0))[0];
+  const bars = SPHERES.map(sp => `
+    <div class="bal-row" style="--c:${sp.color}">
+      <span class="bal-name">${sp.icon} ${nm(sp)}</span>
+      <span class="bar"><i style="width:${Math.round((sphereXp[sp.id] || 0) / maxS * 100)}%"></i></span>
+      <span class="bal-num">${sphereXp[sp.id] || 0}</span>
+    </div>`).join('');
+  return `
+    <div class="stat-tiles">
+      <div class="stat-tile"><b>+${w0.x}</b><span>${T('опыта за 7 дней', 'XP in 7 days')}</span><small class="${diff !== null && diff < 0 ? 'down' : 'up'}">${trend}</small></div>
+      <div class="stat-tile"><b>${w0.active}/7</b><span>${T('активных дней', 'active days')}</span><small>${T(`на прошлой: ${w1.active}/7`, `last week: ${w1.active}/7`)}</small></div>
+      <div class="stat-tile"><b>${actions}</b><span>${T('отметок всего', 'entries in total')}</span><small>${T(`уровень ${st.player.level}`, `level ${st.player.level}`)}</small></div>
+      <div class="stat-tile"><b>🔥 ${st.streak}</b><span>${T('дней подряд с делами', 'days in a row')}</span><small>${T(`рекорд огонька дела: ${best}`, `best activity streak: ${best}`)}</small></div>
+    </div>
+    <h3 class="list-title">${T('Активность за 15 недель', 'Activity over 15 weeks')}</h3>
+    <div class="heatmap" role="img" aria-label="${T('Календарь активности', 'Activity calendar')}">${cells}</div>
+    <p class="hm-legend muted small">${T('меньше', 'less')} <i class="hm-cell l0"></i><i class="hm-cell l1"></i><i class="hm-cell l2"></i><i class="hm-cell l3"></i><i class="hm-cell l4"></i> ${T('больше', 'more')}</p>
+    <h3 class="list-title">${T('Баланс сфер за 30 дней', 'Balance of areas, 30 days')}</h3>
+    <div class="balance">${bars}</div>
+    ${weakest && (sphereXp[weakest.id] || 0) < maxS * 0.25 ? `<p class="muted small">${T(`Меньше всего внимания получает «${nm(weakest)}». Одно дело в день уже выровняет дерево.`, `${nm(weakest)} gets the least attention. One activity a day will even out your tree.`)} <button class="linklike inline" data-action="log-sphere" data-sphere="${weakest.id}">${T('Отметить', 'Log one')}</button></p>` : ''}`;
 }
 
 function panelDiary(st) {
@@ -1738,11 +1939,34 @@ function openSettings() {
     </div>
     <h3>${T('Помощь', 'Help')}</h3>
     <div class="sheet-actions stack">
+      ${installButton()}
       <button class="btn btn-ghost" data-action="feedback">💬 ${T('Написать разработчику', 'Message the developer')}</button>
       <a class="btn btn-ghost" href="/privacy.html${T('', '?lang=en')}" target="_blank" rel="noopener">${T('Политика конфиденциальности', 'Privacy policy')}</a>
       <button class="btn btn-ghost btn-danger-text" data-action="delete-account">${T('Удалить аккаунт', 'Delete account')}</button>
       <button class="btn btn-primary" data-action="close-sheet">${T('Готово', 'Done')}</button>
     </div>`);
+}
+
+// --- Установка на главный экран (как приложение) ---
+let installPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installPrompt = e; });
+const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+const isIos = () => /iphone|ipad|ipod/i.test(navigator.userAgent);
+function installButton() {
+  if (TG.wa || isStandalone() || (!installPrompt && !isIos())) return '';
+  return `<button class="btn btn-ghost" data-action="install-app">📲 ${T('Установить как приложение', 'Install as an app')}</button>`;
+}
+async function installApp() {
+  if (installPrompt) {
+    installPrompt.prompt();
+    try { await installPrompt.userChoice; } catch { /* закрыли окно */ }
+    installPrompt = null;
+    return closeSheet();
+  }
+  openSheet(`
+    <h2>📲 ${T('Установить на iPhone', 'Install on iPhone')}</h2>
+    <p>${T('Открой эту страницу в Safari, нажми «Поделиться» (квадрат со стрелкой) и выбери «На экран „Домой“». Игра появится среди приложений и будет открываться на весь экран.', 'Open this page in Safari, tap Share (the square with an arrow) and choose “Add to Home Screen”. The game will appear among your apps and open full screen.')}</p>
+    <div class="sheet-actions"><button class="btn btn-primary" data-action="close-sheet">${T('Понятно', 'Got it')}</button></div>`);
 }
 
 // --- Отзыв разработчику ---
@@ -2080,7 +2304,12 @@ function bindEvents() {
       if (list) list.innerHTML = diaryList();
     }
   });
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) pullFromServer(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    // Вкладка была открыта с вчерашнего дня — обновляем «сегодня» и огоньки.
+    if (ui.save && ui.renderedDay && ui.renderedDay !== dayKey(Date.now()) && $('#sheet').hidden && !tourActive()) render();
+    pullFromServer();
+  });
   window.addEventListener('focus', pullFromServer);
   document.addEventListener('click', onClick);
   document.addEventListener('keydown', (e) => {
@@ -2150,7 +2379,9 @@ function onClick(e) {
     case 'tour-again':
       closeSheet();
       return startTour(planTour(ui.save.seenTips, { full: true }));
-    case 'hist-mode': ui.histMode = el.dataset.mode; return render();
+    case 'hist-mode': ui.histMode = el.dataset.mode; ui.histLimit = 40; return render();
+    case 'hist-more': ui.histLimit += 80; return render();
+    case 'hm-day': return toast(el.dataset.label, 'info');
     case 'diary-sphere': ui.diarySphere = el.dataset.sphere; return render();
     case 'diary-export': return exportDiary();
     case 'note': return openNote(id);
@@ -2189,6 +2420,7 @@ function onClick(e) {
         T('Удалить', 'Delete'), () => { sb.archived = true; commit(); toast(T('Подветвь удалена', 'Sub-branch deleted'), 'info'); }, true);
     }
     case 'filter': ui.filter = el.dataset.sphere; return render();
+    case 'log-sphere': ui.filter = el.dataset.sphere; ui.tab = 'log'; ui.zoom = null; render(); return window.scrollTo({ top: 0 });
     case 'skill-sphere': ui.skillSphere = el.dataset.sphere; return render();
     case 'mat-sphere': ui.matSphere = el.dataset.sphere; return render();
     case 'log-day': ui.logDay = Number(el.dataset.day); return render();
@@ -2215,6 +2447,7 @@ function onClick(e) {
     case 'forgot-pass': return renderForgot();
     case 'back-to-login': return showAuth();
     case 'open-path': return openPath();
+    case 'install-app': return installApp();
     case 'add-goal': return openAddGoal();
     case 'goal-kind': return openAddGoal(el.dataset.kind);
     case 'goal-template': return openAddGoal('count', { act: el.dataset.act, n: Number(el.dataset.n), period: el.dataset.period });
@@ -2291,6 +2524,13 @@ function onClick(e) {
           ui.selected = null; commit();
         }, true);
     case 'logout':
+      clearTimeout(syncTimer); clearTimeout(retryTimer);
+      // На общем компьютере не оставляем чужой прогресс — но только если он
+      // уже сохранён на сервере.
+      try {
+        if (ui.sync === 'saved' && ui.user) localStorage.removeItem('tol_save_' + ui.user.id);
+        localStorage.removeItem('tol_user');
+      } catch { /* приватный режим */ }
       auth.token = null;
       ui.user = null; ui.save = null; ui.selected = null;
       closeSheet();

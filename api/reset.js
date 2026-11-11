@@ -10,6 +10,7 @@ import { getDb } from '../lib/db.js';
 import { hashPassword, signToken, signResetCode, verifyResetCode, resetCodeUserId } from '../lib/auth.js';
 import { send, readBody, handle, publicUser, tr } from '../lib/http.js';
 import { tgApi, appUrl } from '../lib/admin.js';
+import { blockedFor, hit, clear } from '../lib/limit.js';
 
 export default handle(async (req, res) => {
   if (req.method !== 'POST') return send(res, 405, { error: tr(req, 'Нужен POST-запрос', 'POST request required') });
@@ -20,7 +21,10 @@ export default handle(async (req, res) => {
     const email = String(body.email || '').trim().toLowerCase();
     const user = email ? await db.getUserByEmail(email) : null;
     // Если к аккаунту привязан Telegram — шлём ссылку туда.
-    if (user && user.tg_id && process.env.TELEGRAM_BOT_TOKEN) {
+    // Не чаще 3 ссылок за 15 минут на один аккаунт — чтобы бота нельзя было
+    // использовать для спама чужому игроку.
+    if (user && user.tg_id && process.env.TELEGRAM_BOT_TOKEN && !(await blockedFor(db, 'reset', user.id, 3))) {
+      await hit(db, 'reset', user.id, 15 * 60 * 1000);
       const code = signResetCode(user.id, user.pass_hash);
       const link = `${appUrl()}/?pwreset=${encodeURIComponent(code)}`;
       const state = await db.getState(user.id);
@@ -48,6 +52,7 @@ export default handle(async (req, res) => {
       return send(res, 400, { error: tr(req, 'Ссылка недействительна или устарела. Запроси сброс заново.', 'This link is invalid or expired. Request a new reset.') });
     }
     await db.setPassword(user.id, hashPassword(password));
+    if (user.email) await clear(db, 'login', user.email);
     // Сразу впускаем в аккаунт.
     return send(res, 200, { ok: true, token: signToken(user.id), user: publicUser(await db.getUserById(user.id)) });
   }

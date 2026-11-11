@@ -265,24 +265,13 @@ export const MATERIALS = [
     note_en: 'The GTD system: get every task out of your head and stop worrying about it.' },
 ];
 
-// Стадии роста дерева по общему уровню игрока.
-export const STAGES = [
-  { level: 0,  name: 'Семечко', en: 'Seed' },
-  { level: 2,  name: 'Росток', en: 'Sprout' },
-  { level: 5,  name: 'Саженец', en: 'Sapling' },
-  { level: 9,  name: 'Молодое деревце', en: 'Young tree' },
-  { level: 14, name: 'Крепкое дерево', en: 'Sturdy tree' },
-  { level: 20, name: 'Раскидистое древо', en: 'Spreading tree' },
-  { level: 28, name: 'Вековое древо', en: 'Ancient tree' },
-  { level: 38, name: 'Древо мудрости', en: 'Tree of wisdom' },
-];
-
 // Правила игры, собранные в одном месте.
 export const RULES = {
   sphereXpBase: 30,        // опыт ветви: уровень n требует 30·n·(n+1)/2
   playerXpBase: 60,        // общий уровень: 60·n·(n+1)/2
   repeatFactors: [1, 0.5, 0.2], // повтор одного действия за день: 100%, 50%, 20%
   healOnAction: 4,         // хорошее дело лечит ветвь
+  healComeback: 0.12,      // …и тем сильнее, чем ветвь слабее: при силе 0% дело даёт +16, при 50% — +10
   idleGraceDays: 3,        // через сколько дней без дел ветвь начинает сохнуть
   idleDecayPerDay: 3,      // сколько жизненной силы теряет в день после этого
   materialXp: 15,

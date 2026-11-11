@@ -31,9 +31,12 @@ export function mergeSaves(a, b) {
     events.set(e.id, e);
   }
 
+  // Одинаковые по id записи склеиваются; при расхождении побеждает более
+  // свежая версия сохранения (например, переименование или «убрать из списка»).
   const byId = (x = [], y = []) => {
+    const [older, fresher] = newer === b ? [x, y] : [y, x];
     const m = new Map();
-    for (const it of [...x, ...y]) if (it?.id) m.set(it.id, { ...m.get(it.id), ...it });
+    for (const it of [...older, ...fresher]) if (it?.id) m.set(it.id, { ...m.get(it.id), ...it });
     return [...m.values()];
   };
 

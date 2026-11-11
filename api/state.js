@@ -4,6 +4,7 @@
 import { getDb } from '../lib/db.js';
 import { send, readBody, handle, currentUser, publicUser, tr } from '../lib/http.js';
 import { mergeSaves } from '../public/js/sync.js';
+import { signToken } from '../lib/auth.js';
 
 const MAX_SIZE = 1_500_000; // ~1,5 МБ — хватит на многие годы игры
 
@@ -16,6 +17,9 @@ export default handle(async (req, res) => {
     const state = await db.getState(user.id);
     return send(res, 200, {
       user: publicUser(user),
+      // Свежий токен при каждом входе в игру: кто играет регулярно, тому не
+      // придётся заново вводить пароль каждые два месяца.
+      token: signToken(user.id),
       data: state ? state.data : null,
       updatedAt: state ? state.updatedAt : null,
     });

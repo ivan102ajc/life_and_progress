@@ -4,6 +4,10 @@ import { getDb } from '../lib/db.js';
 import { hashPassword, verifyPassword, signToken } from '../lib/auth.js';
 import { send, readBody, handle, publicUser, currentUser, tr } from '../lib/http.js';
 import { notifyNewPlayer } from '../lib/admin.js';
+import { blockedFor, hit, clear } from '../lib/limit.js';
+
+const LOGIN_TRIES = 8;                 // неверных паролей подряд
+const LOGIN_WINDOW = 15 * 60 * 1000;   // за 15 минут
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -36,12 +40,18 @@ export default handle(async (req, res) => {
   const db = await getDb();
 
   if (action === 'register') {
+    // Не больше 10 новых аккаунтов в час с одного адреса — защита от массовых регистраций.
+    const ip = String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim() || 'unknown';
+    if (await blockedFor(db, 'register', ip, 10)) {
+      return send(res, 429, { error: tr(req, 'Слишком много регистраций с этого адреса. Попробуй позже.', 'Too many sign-ups from this address. Try again later.') });
+    }
     const name = String(body.name || '').trim().slice(0, 40) || email.split('@')[0];
     if (await db.getUserByEmail(email)) {
       return send(res, 409, { error: tr(req, 'Аккаунт с этой почтой уже есть. Попробуйте войти.', 'An account with this email already exists. Try logging in.') });
     }
     try {
       const user = await db.createUser({ email, name, passHash: hashPassword(password) });
+      await hit(db, 'register', ip, 60 * 60 * 1000);
       await notifyNewPlayer(db, user, 'сайт');
       return send(res, 200, { token: signToken(user.id), user: publicUser(user) });
     } catch (err) {
@@ -53,10 +63,18 @@ export default handle(async (req, res) => {
   }
 
   if (action === 'login') {
+    // Защита от подбора пароля: после нескольких неудач — пауза.
+    const wait = await blockedFor(db, 'login', email, LOGIN_TRIES);
+    if (wait) {
+      const min = Math.ceil(wait / 60);
+      return send(res, 429, { error: tr(req, `Слишком много попыток. Попробуй через ${min} мин. или сбрось пароль.`, `Too many attempts. Try again in ${min} min or reset your password.`) });
+    }
     const user = await db.getUserByEmail(email);
     if (!user || !verifyPassword(password, user.pass_hash)) {
+      await hit(db, 'login', email, LOGIN_WINDOW);
       return send(res, 401, { error: tr(req, 'Неверная почта или пароль', 'Wrong email or password') });
     }
+    await clear(db, 'login', email);
     return send(res, 200, { token: signToken(user.id), user: publicUser(user) });
   }
 

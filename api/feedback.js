@@ -5,6 +5,7 @@
 import { getDb } from '../lib/db.js';
 import { send, readBody, handle, currentUser, tr } from '../lib/http.js';
 import { notifyAdmin } from '../lib/admin.js';
+import { blockedFor, hit } from '../lib/limit.js';
 
 export default handle(async (req, res) => {
   if (req.method !== 'POST') return send(res, 405, { error: tr(req, 'Нужен POST-запрос', 'POST request required') });
@@ -18,6 +19,11 @@ export default handle(async (req, res) => {
   const lang = String(req.headers['x-lang'] || 'ru').slice(0, 5);
 
   const db = await getDb();
+  // Не больше 5 сообщений в час от одного игрока — чтобы разработчика не засыпали.
+  if (await blockedFor(db, 'feedback', user.id, 5)) {
+    return send(res, 429, { error: tr(req, 'Слишком много сообщений подряд. Попробуй через час.', 'Too many messages in a row. Try again in an hour.') });
+  }
+  await hit(db, 'feedback', user.id, 60 * 60 * 1000);
   const id = await db.addFeedback({
     userId: user.id, text, lang, platform, ua: String(req.headers['user-agent'] || '').slice(0, 300),
   });

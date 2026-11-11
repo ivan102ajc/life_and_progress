@@ -22,11 +22,15 @@ export const FEATURES = [
   { id: 'reminders', title: ['Напоминания от бота', 'Reminders from the bot'] },
   { id: 'path', title: ['Путь дерева — карта достижений', 'Tree Path — the achievements map'] },
   { id: 'goals', title: ['Свои цели', 'Your own goals'] },
+  { id: 'daily', title: ['«Сегодня», итоги и день отдыха', 'Today, summary and rest days'] },
 ];
 
 // nav — какой экран открыть перед шагом; target — что подсветить
 // (CSS-селектор; если элемента нет, карточка показывается по центру).
 // title и text — пары [по-русски, по-английски].
+// Что входит в короткое обучение для нового игрока.
+const ESSENTIAL = new Set(['core', 'streaks', 'goals']);
+
 export const STEPS = [
   { feature: 'core', nav: { tab: 'tree' }, target: '#tree',
     title: ['Твоё дерево', 'Your tree'],
@@ -34,8 +38,8 @@ export const STEPS = [
       'Eight branches, eight areas of life: health, mind, career, finance, relationships, creativity, peace of mind and home. For now they’re buds — your first activities will make them sprout.'] },
   { feature: 'core', nav: { tab: 'tree' }, target: '.tb-stage',
     title: ['Уровень и стадия', 'Level and stage'],
-    text: ['Весь опыт складывается в общий уровень. Чем он выше, тем больше дерево: от семечка до векового древа.',
-      'All your XP adds up to an overall level. The higher it is, the bigger the tree: from a seed to an ancient tree.'] },
+    text: ['Весь опыт складывается в общий уровень. Чем он выше, тем больше дерево: от семечка до векового древа. Нажми на уровень — откроется «Путь дерева» с наградами за каждую веху.',
+      'All your XP adds up to an overall level. The higher it is, the bigger the tree: from a seed to an ancient tree. Tap the level to open the Tree Path with a reward for every milestone.'] },
   { feature: 'core', nav: { tab: 'log' }, target: '#panel .act-list .act',
     title: ['Отмечай полезные дела', 'Log useful activities'],
     text: ['Сделал что-то полезное — нажми. Ветвь получит опыт и подрастёт. Повтор того же дела за день даёт меньше опыта, так что накрутить не выйдет. Можно отмечать и за вчера.',
@@ -46,10 +50,10 @@ export const STEPS = [
       'Log slips too — honestly. Leaves on the affected branches turn yellow, and the branch grows slower until you heal it with useful activities.'] },
   { feature: 'streaks', nav: { tab: 'log' }, target: '#streaks-block',
     title: ['Огоньки 🔥', 'Streaks 🔥'],
-    text: ['Делай одно дело несколько дней подряд — у него загорится огонёк. На 3, 7, 14, 30 и 100 день — бонус опыта. Пропустил день — огонёк гаснет. «Следить за огоньком» — чтобы нужные всегда были на виду.',
-      'Do the same thing several days in a row and a streak lights up. Day 3, 7, 14, 30 and 100 give bonus XP. Miss a day and it goes out. “Track a streak” keeps the ones you care about in view.'] },
+    text: ['Делай одно дело несколько дней подряд — у него загорится огонёк. На 3, 7, 14, 30 и 100 день — бонус опыта. Пропустил день — огонёк гаснет, но огонёк от 7 дней прощает один пропуск в неделю. «Следить за огоньком» — чтобы нужные всегда были на виду.',
+      'Do the same thing several days in a row and a streak lights up. Day 3, 7, 14, 30 and 100 give bonus XP. Miss a day and it goes out — though a streak of 7+ days forgives one missed day a week. “Track a streak” keeps the ones you care about in view.'] },
   { feature: 'core', nav: { tab: 'tree' }, target: '#panel .sphere-list .sphere-row',
-    title: ['Жизненная сила ветвей', 'Branch vitality'],
+    extra: true, title: ['Жизненная сила ветвей', 'Branch vitality'],
     text: ['Если ветвь не поливать больше 3 дней, она начинает сохнуть. Здесь видно, какая сфера цветёт, а какая просит внимания.',
       'If a branch isn’t watered for more than 3 days, it starts drying out. Here you see which area is blooming and which needs attention.'] },
   { feature: 'subs', nav: { tab: 'tree' }, target: '.tag-wrap[data-sphere="mind"]',
@@ -65,11 +69,11 @@ export const STEPS = [
     text: ['Отмечай время на каждую подветвь — здесь появится сравнение за неделю и месяц и подсказка, что ты давно забросил.',
       'Log time for each sub-branch — you’ll see a comparison for the week and month, plus a hint about what you’ve neglected.'] },
   { feature: 'core', nav: { tab: 'skills' }, target: '#panel .skill-tree .skill',
-    title: ['Навыки', 'Skills'],
+    extra: true, title: ['Навыки', 'Skills'],
     text: ['Реальные достижения: «пробежать 5 км», «составить бюджет». Открываются с уровнем ветви. Каждый освоенный навык — новая веточка с плодом и бонус опыта.',
       'Real achievements: “run 5 km”, “make a budget”. They unlock with the branch level. Each mastered skill is a new twig with fruit and bonus XP.'] },
   { feature: 'core', nav: { tab: 'materials' }, target: '#panel .mat-list .mat',
-    title: ['Материалы', 'Resources'],
+    extra: true, title: ['Материалы', 'Resources'],
     text: ['Книги, курсы и сайты для каждой сферы. Изучил — отметь и получи опыт.',
       'Books, courses and websites for every area. Finished one? Mark it and get XP.'] },
   { feature: 'notes', nav: { tab: 'history', histMode: 'all' }, target: '#panel .panel-head',
@@ -104,6 +108,18 @@ export const STEPS = [
     title: ['Ставь себе цели', 'Set yourself goals'],
     text: ['Во вкладке «Цели» можно поставить цель: делать дело N раз в неделю или месяц, уделять подветви N часов, довести ветвь до нужного уровня или любую свою — например, «сдать сессию». Игра сама считает прогресс, а за выполненную цель даёт награду опытом.',
       'In the Goals tab you can set a goal: do an activity N times a week or month, spend N hours on a sub-branch, bring a branch to a level, or anything of your own — like “pass my exams”. The game tracks progress and rewards you with XP when you complete it.'] },
+  { feature: 'daily', nav: { tab: 'tree' }, target: '#panel .today',
+    title: ['Что сделать сегодня', 'What to do today'],
+    text: ['На главном экране появился блок «Сегодня»: сколько уже сделано и что стоит сделать — забрать награду за цель, не дать погаснуть огоньку, полить засыхающую ветвь. А во вкладке «Отметить» сверху теперь твои самые частые дела.',
+      'The home screen now has a Today card: what you’ve done and what’s worth doing — claim a goal reward, keep a streak alive, water a drying branch. And the Log tab now starts with your most frequent activities.'] },
+  { feature: 'daily', nav: { tab: 'log' }, target: '#streaks-block',
+    title: ['День отдыха для огонька', 'A rest day for streaks'],
+    text: ['Огонёк от 7 дней больше не гаснет из-за одного пропуска: раз в неделю ему прощается день отдыха. А заброшенная ветвь теперь оживает быстрее — чем она слабее, тем сильнее её лечит каждое дело.',
+      'A streak of 7+ days no longer dies from one missed day: once a week it gets a rest day. And a neglected branch now recovers faster — the weaker it is, the more each activity heals it.'] },
+  { feature: 'daily', nav: { tab: 'history', histMode: 'stats' }, target: '#panel .stat-tiles',
+    title: ['Итоги', 'Summary'],
+    text: ['В «Истории» появились «Итоги»: опыт за неделю в сравнении с прошлой, календарь активности и баланс сфер — видно, чему ты уделяешь мало внимания.',
+      'History now has a Summary: this week’s XP versus last week, an activity calendar and the balance of your areas — so you can see what gets too little attention.'] },
 ];
 
 const pick = (v) => (Array.isArray(v) ? T(v[0], v[1]) : v);
@@ -115,8 +131,12 @@ export function planTour(seen, { full = false } = {}) {
   if (!full && !unseen.length) return null;
   const isFull = full || !seenSet.size; // ещё ни разу не проходил — полное обучение
   const features = isFull ? FEATURES : unseen;
-  const ids = new Set(features.map(f => f.id));
-  const steps = STEPS.filter(s => ids.has(s.feature));
+  // Новичку показываем только главное (иначе обучение растягивается на 20 шагов):
+  // остальное он откроет сам, а полный тур есть в настройках.
+  const firstRun = !full && !seenSet.size;
+  const ids = new Set((firstRun ? FEATURES.filter(f => ESSENTIAL.has(f.id)) : features).map(f => f.id));
+  // extra — подробности, которые новичку на первом входе не нужны.
+  const steps = STEPS.filter(s => ids.has(s.feature) && !(firstRun && s.extra));
   const intro = isFull
     ? { title: ['Добро пожаловать в Древо жизни 🌱', 'Welcome to Tree of Life 🌱'], text: ['Здесь твои реальные дела растят дерево, а вредные привычки заставляют листья желтеть. Покажу за минуту, как всё устроено.', 'Here your real-life activities grow a tree, and bad habits turn its leaves yellow. Let me show you how it all works in a minute.'], center: true }
     : { title: ['Что нового ✨', 'What’s new ✨'], text: ['В игре появилось новое:', 'New in the game:'], list: features.map(f => f.title), center: true };

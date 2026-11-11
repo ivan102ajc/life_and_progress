@@ -3,7 +3,7 @@
 // дерево просто пересчитается так, будто этого не было.
 
 import {
-  SPHERES, ACTIONS, BAD_HABITS, SKILL_BY_ID, MATERIALS, STAGES, RULES,
+  SPHERES, ACTIONS, BAD_HABITS, SKILL_BY_ID, MATERIALS, RULES,
 } from './data.js';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -224,11 +224,11 @@ export function levelInfo(xp, base) {
   return { level, into: xp - from, need: to - from, progress: (xp - from) / (to - from) };
 }
 
+// Стадия дерева — это текущая веха «Пути дерева» (один список названий).
 export function stageFor(level) {
-  let stage = STAGES[0];
-  for (const s of STAGES) if (level >= s.level) stage = s;
-  const next = STAGES.find(s => s.level > level) || null;
-  return { ...stage, next };
+  const { tier, next } = pathTier(level);
+  const view = (t) => t && { level: t.level, name: t.name[0], en: t.name[1] };
+  return { ...view(tier), next: view(next) };
 }
 
 // Номер дня по местному времени — чтобы проверять, идут ли дни подряд.
@@ -238,6 +238,11 @@ export function dayNum(t) {
 
 // Огоньки: на какой день подряд даётся бонус и сколько опыта.
 export const STREAK_MILESTONES = { 3: 10, 7: 25, 14: 50, 30: 100, 60: 150, 100: 250, 365: 500 };
+
+// День отдыха: огонёк от 7 дней переживает один пропущенный день, но не чаще
+// раза в 7 дней. Пропущенный день в длину огонька не идёт.
+export const REST_RULES = { minLen: 7, every: 7 };
+const canRest = (r, missedDay) => r.len >= REST_RULES.minLen && (r.restAt == null || missedDay - r.restAt >= REST_RULES.every);
 
 export function nextMilestone(n) {
   return Number(Object.keys(STREAK_MILESTONES).find(m => Number(m) > n)) || null;
@@ -258,14 +263,14 @@ export const PATH = [
   { level: 2,  name: ['Росток', 'Sprout'], grants: [{ grow: 1 }, { decor: 'blossom' }] },
   { level: 3,  name: ['Первые листья', 'First leaves'], grants: [{ decor: 'fireflies' }] },
   { level: 5,  name: ['Саженец', 'Sapling'], grants: [{ grow: 1 }, { boost: 0.03 }] },
-  { level: 7,  name: ['Крепкий стебель', 'Strong stem'], grants: [{ decor: 'fruits' }] },
+  { level: 7,  name: ['Крепкий стебель', 'Strong stem'], grants: [{ decor: 'butterflies' }] },
   { level: 9,  name: ['Молодое деревце', 'Young tree'], grants: [{ grow: 1 }, { style: 'starlit' }] },
   { level: 12, name: ['Пышная крона', 'Lush crown'], grants: [{ grow: 1 }, { boost: 0.03 }] },
   { level: 14, name: ['Крепкое дерево', 'Sturdy tree'], grants: [{ decor: 'birds' }] },
   { level: 17, name: ['Цветущий сад', 'Blooming garden'], grants: [{ grow: 1 }, { boost: 0.03 }] },
   { level: 20, name: ['Раскидистое древо', 'Spreading tree'], grants: [{ grow: 1 }, { style: 'aurora' }] },
   { level: 24, name: ['Сияющая крона', 'Radiant crown'], grants: [{ decor: 'aura' }, { boost: 0.03 }] },
-  { level: 28, name: ['Вековое древо', 'Ancient tree'], grants: [{ grow: 2 }, { decor: 'aura' }] },
+  { level: 28, name: ['Вековое древо', 'Ancient tree'], grants: [{ grow: 3 }] },
   { level: 38, name: ['Древо мудрости', 'Tree of wisdom'], grants: [{ grow: 2 }, { boost: 0.03 }] },
 ];
 
@@ -277,7 +282,12 @@ export function pathTier(level) {
 }
 
 // Всё, что открыто к этому уровню: пышность, украшения, стили, ускорение опыта.
+const perksCache = new Map();
 export function pathPerks(level) {
+  if (!perksCache.has(level)) perksCache.set(level, buildPerks(level));
+  return perksCache.get(level);
+}
+function buildPerks(level) {
   let growth = 0; let boost = 0;
   const decor = new Set(); const styles = new Set();
   for (const t of PATH) {
@@ -407,7 +417,7 @@ export function compute(save, now = Date.now()) {
     s.started = true;
     s.lastActive = t;
     s.decayApplied = 0;
-    s.health = Math.min(100, s.health + RULES.healOnAction);
+    s.health = Math.min(100, s.health + RULES.healOnAction + Math.round((100 - s.health) * RULES.healComeback));
     return gained;
   };
 
@@ -416,7 +426,9 @@ export function compute(save, now = Date.now()) {
     const d = dayNum(t);
     const r = runs[key] || (runs[key] = { last: null, len: 0, best: 0 });
     if (r.last === d) return;
-    r.len = r.last === d - 1 ? r.len + 1 : 1;
+    if (r.last === d - 1) r.len += 1;
+    else if (r.last === d - 2 && canRest(r, d - 1)) { r.len += 1; r.restAt = d - 1; eff.rest = true; }
+    else { r.len = 1; r.restAt = null; }
     r.last = d;
     r.best = Math.max(r.best, r.len);
     const bonus = withBonus && STREAK_MILESTONES[r.len];
@@ -570,8 +582,10 @@ export function compute(save, now = Date.now()) {
   const today = dayNum(now);
   const streaks = {};
   for (const [id, r] of Object.entries(runs)) {
-    const status = r.last === today ? 'lit' : r.last === today - 1 ? 'risk' : 'out';
-    streaks[id] = { days: status === 'out' ? 0 : r.len, best: r.best, status };
+    // rest — вчера был пропуск, но огонёк держится на дне отдыха: сегодня последний шанс.
+    const rest = r.last === today - 2 && canRest(r, today - 1);
+    const status = r.last === today ? 'lit' : r.last === today - 1 || rest ? 'risk' : 'out';
+    streaks[id] = { days: status === 'out' ? 0 : r.len, best: r.best, status, rest };
   }
 
   const cleanDays = {};
