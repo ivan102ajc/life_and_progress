@@ -185,6 +185,8 @@ async function loadGame() {
 }
 
 function showScreen(name, message) {
+  // Плашка «Добавить заметку» и уведомления относятся к игре — убираем их с других экранов.
+  if (name !== 'game') { hideSnack(); $('#toasts').innerHTML = ''; }
   $('#auth').hidden = name !== 'auth';
   if (name !== 'auth') $('#auth').innerHTML = '';
   $('#game').hidden = name !== 'game';
@@ -254,6 +256,7 @@ function renderAuth(error = '') {
         ${reg ? `<label class="field"><span>${T('Как тебя зовут', 'Your name')}</span><input name="name" autocomplete="nickname" maxlength="40" placeholder="${T('Иван', 'Alex')}"></label>` : ''}
         <label class="field"><span>${T('Почта', 'Email')}</span><input name="email" type="email" autocomplete="email" required placeholder="${T('you@mail.ru', 'you@example.com')}"></label>
         <label class="field"><span>${T('Пароль', 'Password')}</span><input name="password" type="password" autocomplete="${reg ? 'new-password' : 'current-password'}" required minlength="6" placeholder="${T('Не короче 6 символов', 'At least 6 characters')}"></label>
+        ${reg ? `<p class="field-hint">⚠️ ${T('Запомни пароль. Восстановить его можно через Telegram — привяжи его после входа в настройках. Без Telegram сбросить пароль получится только через поддержку.', 'Remember your password. It can be reset via Telegram — link it in settings after you sign in. Without Telegram, a reset is only possible through support.')}</p>` : ''}
         <p class="form-error" role="alert">${esc(error)}</p>
         <button class="btn btn-primary btn-wide" type="submit">${reg ? T('Посадить своё дерево', 'Plant my tree') : T('Войти', 'Log in')}</button>
         ${!reg ? `<button type="button" class="linklike" data-action="forgot-pass">${T('Забыли пароль?', 'Forgot your password?')}</button>` : ''}
@@ -310,6 +313,37 @@ function openPath() {
   `);
 }
 
+// --- Поддержка и предупреждение про восстановление пароля ---
+// Ссылка на бота игры: ему можно написать, даже если не получается войти.
+let botName = null; let botNameLoading = false;
+const botLink = () => botName
+  ? `<a href="https://t.me/${esc(botName)}?start=support" target="_blank" rel="noopener">@${esc(botName)}</a>`
+  : T('боту игры в Telegram', 'the game bot in Telegram');
+function supportLink() {
+  if (!botName && !botNameLoading) {
+    botNameLoading = true;
+    api.botInfo().then((r) => {
+      botName = r.bot || null;
+      if (botName) document.querySelectorAll('.support-bot').forEach((el) => { el.innerHTML = botLink(); });
+    }).catch(() => { botNameLoading = false; });
+  }
+  return `<span class="support-bot">${botLink()}</span>`;
+}
+// Аккаунт по почте без Telegram: забытый пароль сам не восстановить.
+const noRecovery = () => Boolean(ui.user?.email && !ui.user.telegram);
+function recoveryWarning({ dismiss = false } = {}) {
+  return `
+    <div class="warn-box">
+      <strong>⚠️ ${T('Привяжи Telegram, чтобы не потерять доступ', 'Link Telegram so you don’t lose access')}</strong>
+      <p>${T('Забытый пароль восстанавливается через бота игры в Telegram. Пока Telegram не привязан, сбросить пароль сам ты не сможешь — только написать в поддержку и подтвердить, что аккаунт твой (это дольше и не всегда возможно).',
+        'A forgotten password is reset through the game bot in Telegram. Until Telegram is linked, you can’t reset it yourself — only by contacting support and proving the account is yours (slower and not always possible).')}</p>
+      <div class="warn-actions">
+        <button class="btn btn-small btn-primary" data-action="link-tg">${T('Привязать Telegram', 'Link Telegram')}</button>
+        ${dismiss ? `<button class="btn btn-small btn-ghost" data-action="dismiss-tg-warn">${T('Позже', 'Later')}</button>` : ''}
+      </div>
+    </div>`;
+}
+
 // --- Восстановление пароля ---
 
 // Экран «забыли пароль»: ввод почты. Ссылка для сброса придёт в Telegram.
@@ -326,7 +360,10 @@ function renderForgot(error = '') {
         <button class="btn btn-primary btn-wide" type="submit">${T('Прислать ссылку в Telegram', 'Send link to Telegram')}</button>
         <button type="button" class="linklike" data-action="back-to-login">${T('Назад ко входу', 'Back to login')}</button>
       </form>
-      <p class="small muted">${T('Нет Telegram у аккаунта? Тогда сбросить пароль сам ты не сможешь — напиши разработчику.', 'Account has no Telegram linked? Then you can’t reset it yourself — contact the developer.')}</p>
+      <div class="warn-box">
+        <strong>${T('К аккаунту не привязан Telegram?', 'No Telegram linked to the account?')}</strong>
+        <p>${T('Тогда ссылка не придёт, а сам сбросить пароль ты не сможешь. Напиши в поддержку —', 'Then no link will come, and you can’t reset the password yourself. Write to support —')} ${supportLink()}${T(': укажи почту аккаунта, имя в игре, примерно когда регистрировался и что отмечал. Разработчик проверит, что аккаунт твой, и пришлёт ссылку для нового пароля.', ': include the account email, your in-game name, roughly when you signed up and what you logged. The developer will check the account is yours and send a reset link.')}</p>
+      </div>
     </div>`;
 }
 
@@ -342,6 +379,7 @@ async function submitForgot(form) {
       <div class="auth-top"><h1 class="logo">${T('Древо жизни', 'Tree of Life')}</h1>${langSwitch('lang-auth')}</div>
       <h2>${T('Проверь Telegram', 'Check Telegram')}</h2>
       <p class="auth-lead">${T('Если аккаунт с этой почтой существует и к нему привязан Telegram, бот игры прислал туда ссылку для сброса пароля. Ссылка действует 30 минут.', 'If an account with this email exists and has Telegram linked, the game bot has sent a reset link there. The link is valid for 30 minutes.')}</p>
+      <p class="small muted">${T('Ничего не пришло за пару минут? Значит, Telegram к аккаунту не привязан — напиши в поддержку', 'Nothing in a couple of minutes? Then Telegram isn’t linked to the account — write to support')}: ${supportLink()}.</p>
       <button type="button" class="btn btn-primary btn-wide" data-action="back-to-login">${T('Вернуться ко входу', 'Back to login')}</button>
     </div>`;
 }
@@ -778,6 +816,8 @@ function todayCard(st) {
 
 function panelTree(st) {
   const started = SPHERES.filter(s => st.spheres[s.id].started).length;
+  // Предупреждение про пароль — после первых отметок, пока не привязан Telegram или не скрыто.
+  const tgWarn = noRecovery() && st.totalXp > 0 && !ui.save.seenTips.includes('tg-warn') ? recoveryWarning({ dismiss: true }) : '';
   const intro = st.totalXp === 0 ? `
     <div class="callout">
       <h3>${T('С чего начать', 'Where to start')}</h3>
@@ -799,6 +839,7 @@ function panelTree(st) {
   }).join('');
   return `
     ${intro}
+    ${tgWarn}
     ${todayCard(st)}
     <div class="panel-head">
       <h2>${T('Ветви', 'Branches')}</h2>
@@ -2050,6 +2091,7 @@ function accountBlock() {
         ${tgBtn}
       </div>
     </div>
+    ${noRecovery() ? recoveryWarning() : ''}
     ${TG.wa && !u.email ? `<button class="btn btn-ghost btn-wide" data-action="merge-login">${T('Уже играю на сайте — объединить', 'I already play on the website — merge')}</button>` : ''}
     <p class="small muted">${T('Связанные вход по почте и Telegram — это один аккаунт: отметил дело на телефоне — увидишь его на компьютере. При объединении прогресс складывается, ничего не теряется.', 'Linked email login and Telegram are one account: log on your phone, see it on your computer. Merging adds the progress together — nothing is lost.')}</p>`;
 }
@@ -2447,6 +2489,7 @@ function onClick(e) {
     case 'forgot-pass': return renderForgot();
     case 'back-to-login': return showAuth();
     case 'open-path': return openPath();
+    case 'dismiss-tg-warn': ui.save.seenTips = [...new Set([...ui.save.seenTips, 'tg-warn'])]; commit(); return toast(T('Напомню в настройках → «Аккаунт»', 'You’ll find it in Settings → Account'), 'info');
     case 'install-app': return installApp();
     case 'add-goal': return openAddGoal();
     case 'goal-kind': return openAddGoal(el.dataset.kind);

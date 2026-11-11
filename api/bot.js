@@ -11,7 +11,9 @@ import { send, readBody, handle } from '../lib/http.js';
 import { getDb } from '../lib/db.js';
 import { verifyLinkCode } from '../lib/auth.js';
 import { linkTelegram, maskEmail } from '../lib/link.js';
-import { isAdmin, adminIds, computeStats } from '../lib/admin.js';
+import { isAdmin, adminIds, computeStats, notifyAdmin, appUrl as siteUrl } from '../lib/admin.js';
+import { signResetCode } from '../lib/auth.js';
+import { blockedFor, hit } from '../lib/limit.js';
 
 const fmtDate = (ms) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
 const fmtDay = (ms) => (ms ? new Date(ms).toISOString().slice(0, 10) : '—');
@@ -54,8 +56,42 @@ async function adminCommand(msg, text) {
       `#${f.id} · ${f.name || 'игрок удалён'} · ${f.platform === 'telegram' ? 'Telegram' : 'сайт'} · ${fmtDate(f.createdAt)}\n${f.text}`).join('\n\n') +
       '\n\nЧтобы ответить игроку — ответь (reply) на уведомление об отзыве.';
   }
+  // /reset почта — ссылка для сброса пароля аккаунту без Telegram (через поддержку).
+  const rm = text.match(/^\/reset(?:@\w+)?\s+(\S+@\S+)/i);
+  if (rm) {
+    const user = await db.getUserByEmail(rm[1].trim().toLowerCase());
+    if (!user) return 'Аккаунта с такой почтой нет.';
+    if (!user.pass_hash) return 'У этого аккаунта нет пароля — в него входят через Telegram.';
+    const state = await db.getState(user.id);
+    const events = state?.data?.events || [];
+    const last = events.reduce((m, e) => Math.max(m, e.c || 0, e.t || 0), 0);
+    const link = `${siteUrl()}/?pwreset=${encodeURIComponent(signResetCode(user.id, user.pass_hash))}`;
+    return `🔑 Аккаунт «${user.name}»
+зарегистрирован: ${user.created_at ? fmtDate(new Date(user.created_at).getTime()) : '—'}
+отметок: ${events.length}, последняя: ${last ? fmtDate(last) : '—'} (время UTC)
+Telegram: ${user.tg_id ? 'привязан' : 'нет'}
+
+` +
+      `⚠️ Сначала убедись, что пишет владелец: спроси имя в игре, когда регистрировался, что отмечал в последние дни.
+
+Ссылка (действует 30 минут, одноразовая):
+${link}`;
+  }
+  if (/^\/reset\b/.test(text)) return 'Напиши так: /reset почта@игрока.ru';
+
   // Ответ разработчика на уведомление об отзыве уходит игроку.
   const quoted = msg.reply_to_message?.text || '';
+  // Ответ на обращение в поддержку уходит тому, кто написал.
+  const sm = quoted.match(/Поддержка · tg:(\d+) · (ru|en)/);
+  if (sm && !text.startsWith('/')) {
+    const en = sm[2] === 'en';
+    const r = await tg('sendMessage', {
+      chat_id: sm[1],
+      text: (en ? '💬 Reply from Tree of Life support:\n\n' : '💬 Ответ поддержки «Древа жизни»:\n\n') + text,
+      disable_web_page_preview: true,
+    });
+    return r.ok ? '✅ Ответ отправлен.' : 'Не получилось отправить: человек, возможно, остановил бота.';
+  }
   const m = quoted.match(/Отзыв #(\d+)/);
   if (m && !text.startsWith('/')) {
     const fb = await db.getFeedback(m[1]);
@@ -103,14 +139,14 @@ const WELCOME = (from) => {
     '• Новый навык — веточка с плодом\n' +
     '• Вредная привычка — листья желтеют\n' +
     '• Делаешь что-то каждый день — горит огонёк 🔥\n\n' +
-    'Нажми кнопку ниже, чтобы открыть своё дерево.',
+    'Нажми кнопку ниже, чтобы открыть своё дерево.\n\nЕсли что-то не работает — просто напиши сюда, сообщение получит разработчик.',
     `Hi${name ? ', ' + name : ''}! 🌱\n\n` +
     'This is Tree of Life — a game where your real-life activities grow a tree.\n\n' +
     '• A useful activity — a branch grows and fills with leaves\n' +
     '• A new skill — a twig with fruit\n' +
     '• A bad habit — leaves turn yellow\n' +
     '• Do something every day — a streak lights up 🔥\n\n' +
-    'Tap the button below to open your tree.');
+    'Tap the button below to open your tree.\n\nIf something doesn’t work, just write here — the developer will get your message.');
 };
 
 export default handle(async (req, res) => {
@@ -134,6 +170,7 @@ export default handle(async (req, res) => {
         commands: [
           { command: 'start', description: 'Open Tree of Life' },
           { command: 'help', description: 'How to play' },
+          { command: 'support', description: 'Write to support' },
         ],
       }),
       commandsRu: await tg('setMyCommands', {
@@ -141,6 +178,7 @@ export default handle(async (req, res) => {
         commands: [
           { command: 'start', description: 'Открыть Древо жизни' },
           { command: 'help', description: 'Как играть' },
+          { command: 'support', description: 'Написать в поддержку' },
         ],
       }),
       // Для разработчика — отдельный список команд, его видят только админы.
@@ -151,6 +189,7 @@ export default handle(async (req, res) => {
           { command: 'users', description: 'Последние игроки' },
           { command: 'errors', description: 'Частые ошибки' },
           { command: 'feedback', description: 'Последние отзывы' },
+          { command: 'reset', description: 'Ссылка сброса пароля: /reset почта' },
           { command: 'start', description: 'Открыть Древо жизни' },
           { command: 'myid', description: 'Мой Telegram id' },
         ],
@@ -239,8 +278,36 @@ export default handle(async (req, res) => {
         }
       }
       await tg('sendMessage', { chat_id: msg.chat.id, text: reply, ...button });
+    } else if (/^\/support\b/.test(text) || payload === 'support') {
+      await tg('sendMessage', {
+        chat_id: msg.chat.id,
+        text: L(from,
+          '🆘 Поддержка «Древа жизни»\n\nНапиши сюда одним сообщением, что случилось, — я передам разработчику, а ответ придёт в этот чат.\n\nЕсли не можешь войти по почте: укажи почту аккаунта, имя в игре и примерно когда регистрировался и что отмечал — так разработчик убедится, что аккаунт твой.',
+          '🆘 Tree of Life support\n\nWrite what happened in one message here — I’ll pass it to the developer, and the reply will come to this chat.\n\nIf you can’t log in with email: include the account email, your in-game name, roughly when you signed up and what you logged — so the developer can confirm the account is yours.'),
+      });
     } else if (text.startsWith('/start') || text.startsWith('/help')) {
       await tg('sendMessage', { chat_id: msg.chat.id, text: WELCOME(from), ...button });
+    } else if (msg.chat.type === 'private' && text && !text.startsWith('/') && msg.from?.id && !isAdmin(msg.from.id)) {
+      // Обычное сообщение боту — обращение в поддержку: передаём разработчику.
+      const db = await getDb();
+      const tgId = String(msg.from.id);
+      let reply;
+      if (!adminIds().length) {
+        reply = L(from, 'Поддержка пока не подключена. Попробуй позже.', 'Support isn’t set up yet. Please try later.');
+      } else if (await blockedFor(db, 'support', tgId, 6)) {
+        reply = L(from, 'Ты уже отправил несколько сообщений — разработчик их получил. Подожди ответа, пожалуйста.', 'You’ve sent several messages already — the developer has them. Please wait for a reply.');
+      } else {
+        await hit(db, 'support', tgId, 60 * 60 * 1000);
+        const account = await db.getUserByTg(tgId);
+        const who = [msg.from.first_name, msg.from.last_name].filter(Boolean).join(' ') + (msg.from.username ? ` @${msg.from.username}` : '');
+        await notifyAdmin(
+          `🆘 Поддержка · tg:${tgId} · ${String(from?.language_code || '').startsWith('en') ? 'en' : 'ru'}\nОт: ${who || 'без имени'} · аккаунт: ${account ? `«${account.name}»${account.email ? ' ' + maskEmail(account.email) : ''}` : 'Telegram не привязан'}\n\n${text.slice(0, 3000)}\n\n↩️ Ответь на это сообщение — ответ уйдёт человеку. Для сброса пароля: /reset почта`,
+        );
+        reply = L(from, '✅ Передал разработчику. Ответ придёт сюда, в этот чат.', '✅ Passed to the developer. The reply will come here, to this chat.');
+      }
+      await tg('sendMessage', { chat_id: msg.chat.id, text: reply, ...button });
+    } else if (msg.chat.type === 'private' && text && !text.startsWith('/') && msg.from?.id && isAdmin(msg.from.id)) {
+      await tg('sendMessage', { chat_id: msg.chat.id, text: 'Это сообщение никуда не ушло. Чтобы ответить человеку, ответь (reply) на его обращение или отзыв.' });
     } else {
       await tg('sendMessage', {
         chat_id: msg.chat.id,

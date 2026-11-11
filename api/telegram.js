@@ -4,6 +4,7 @@
 //                           привязывается к его аккаунту, прогресс объединяется.
 //   { action: 'code' }    — ссылка на бота для привязки Telegram с сайта.
 //   { action: 'unlink' }  — отвязать Telegram от аккаунта.
+// GET /api/telegram       — имя бота (для ссылки «написать в поддержку»).
 //
 // Нужна переменная окружения TELEGRAM_BOT_TOKEN (токен бота от @BotFather).
 
@@ -23,6 +24,11 @@ async function getBotName(token) {
 }
 
 export default handle(async (req, res) => {
+  // GET /api/telegram — имя бота игры (для ссылки на поддержку).
+  if (req.method === 'GET') {
+    const token = process.env.TELEGRAM_BOT_TOKEN;
+    return send(res, 200, { bot: token ? await getBotName(token).catch(() => null) : null });
+  }
   if (req.method !== 'POST') return send(res, 405, { error: tr(req, 'Нужен POST-запрос', 'POST request required') });
 
   const botToken = process.env.TELEGRAM_BOT_TOKEN;

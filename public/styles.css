@@ -748,3 +748,11 @@ p { margin: 0; }
 .bal-num { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
 .linklike.inline { display: inline; width: auto; margin: 0; padding: 0; color: var(--accent); font-weight: 700; }
 .is-pixel .stat-tile, .is-pixel .heatmap, .is-pixel .balance, .is-pixel .hm-cell { border-radius: 0; }
+
+/* Предупреждение (например, «привяжи Telegram») */
+.warn-box { background: color-mix(in srgb, #F6B93B 16%, var(--surface)); border: 1.5px solid color-mix(in srgb, #F6B93B 55%, transparent); border-radius: var(--radius); padding: 12px 14px; margin: 10px 0; display: grid; gap: 6px; }
+.warn-box strong { font-size: 15px; }
+.warn-box p { margin: 0; font-size: 14px; line-height: 1.45; }
+.warn-box a { color: inherit; font-weight: 700; }
+.warn-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.is-pixel .warn-box { border-radius: 0; border: 2px solid var(--ink); }
