@@ -17,7 +17,7 @@ export function newSave(name = '') {
     theme: 'spring',
     createdAt: Date.now(),
     events: [],              // { id, t, k: 'act'|'bad'|'skill'|'mat', ref }
-    custom: { acts: [], bads: [], subs: [] },
+    custom: { acts: [], bads: [], subs: [], goals: [] },
     tracked: [],             // id дел, за огоньком которых игрок следит
     seenTips: [],            // какие функции игрок уже видел в обучении
     deleted: [],             // id отменённых событий (для синхронизации устройств)
@@ -41,6 +41,7 @@ export function normalizeSave(save, name) {
       acts: Array.isArray(save.custom?.acts) ? save.custom.acts : [],
       bads: Array.isArray(save.custom?.bads) ? save.custom.bads : [],
       subs: Array.isArray(save.custom?.subs) ? save.custom.subs : [],
+      goals: Array.isArray(save.custom?.goals) ? save.custom.goals : [],
     },
   };
 }
@@ -65,6 +66,74 @@ export function findBad(save, id) {
 }
 export function findSub(save, id) {
   return save.custom.subs.find(x => x.id === id);
+}
+export function findGoal(save, id) {
+  return (save.custom.goals || []).find(x => x.id === id);
+}
+
+// --- Цели игрока --------------------------------------------------------------
+// Виды: count — сделать дело N раз; time — N минут на подветвь;
+// level — довести сферу до уровня N; custom — своя цель, отмечается вручную.
+// Период: week / month — цель повторяется, награду можно забрать раз за период;
+// once — разовая (у level и custom всегда разовая).
+export const GOAL_RULES = { reward: { week: 40, month: 120, once: 80 }, maxActive: 20 };
+
+export function goalPeriod(goal) {
+  return goal.kind === 'level' || goal.kind === 'custom' ? 'once' : (goal.period || 'week');
+}
+export function goalReward(goal) {
+  return GOAL_RULES.reward[goalPeriod(goal)];
+}
+function weekStart(t) {
+  const d = new Date(t);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));   // неделя начинается с понедельника
+  return d.getTime();
+}
+export function periodKey(period, t) {
+  if (period === 'week') return 'w' + dayKey(weekStart(t));
+  if (period === 'month') { const d = new Date(t); return 'm' + d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); }
+  return 'once';
+}
+function periodStart(period, t, goal) {
+  if (period === 'week') return weekStart(t);
+  if (period === 'month') { const d = new Date(t); return new Date(d.getFullYear(), d.getMonth(), 1).getTime(); }
+  return goal.created || 0;
+}
+
+// Прогресс цели за текущий период по вычисленному состоянию.
+export function goalProgress(save, st, goal, now = Date.now()) {
+  const period = goalPeriod(goal);
+  const key = periodKey(period, now);
+  const from = periodStart(period, now, goal);
+  let value = 0;
+  let target = Math.max(1, Math.round(Number(goal.target) || 1));
+  if (goal.kind === 'count') {
+    for (const e of save.events) {
+      if (e.t < from || e.t > now) continue;
+      const eff = st.effects[e.id];
+      if (!eff?.valid) continue;
+      // Время на подветвь, связанную с делом, тоже засчитывает дело.
+      if ((e.k === 'act' && e.ref === goal.ref) || (e.k === 'time' && eff.act === goal.ref)) value++;
+    }
+  } else if (goal.kind === 'time') {
+    for (const e of save.events) {
+      if (e.k !== 'time' || e.ref !== goal.ref || e.t < from || e.t > now) continue;
+      if (st.effects[e.id]?.valid) value += Math.round(Number(e.m) || 0);
+    }
+  } else if (goal.kind === 'level') {
+    value = st.spheres[goal.ref]?.level || 0;
+  } else {
+    target = 1;
+  }
+  const claimed = Boolean(st.goalClaims?.has(goal.id + '|' + key));
+  if (goal.kind === 'custom') value = claimed ? 1 : 0;
+  return {
+    value, target, period, key, claimed,
+    done: value >= target,
+    times: st.goalCounts?.[goal.id] || 0,
+    reward: goalReward(goal),
+  };
 }
 export function subsOf(save, sphereId) {
   return save.custom.subs.filter(x => x.sphere === sphereId && !x.archived);
@@ -252,6 +321,12 @@ export const BADGES = [
   { id: 'clean', icon: '🛡️', name: ['Чистая неделя', 'Clean week'],
     desc: ['7 дней без вредных привычек', '7 days with no bad habits'],
     has: (st) => (st.cleanDays || 0) >= 7 },
+  { id: 'goal', icon: '🎯', name: ['Целеустремлённый', 'Goal-getter'],
+    desc: ['Выполнить первую свою цель', 'Complete your first goal'],
+    has: (st) => (st.goalsDone || 0) >= 1 },
+  { id: 'goals10', icon: '🏆', name: ['Десять целей', 'Ten goals'],
+    desc: ['Выполнить 10 целей', 'Complete 10 goals'],
+    has: (st) => (st.goalsDone || 0) >= 10 },
   { id: 'mighty', icon: '🌳', name: ['Могучее древо', 'Mighty tree'],
     desc: ['Достичь 20 уровня дерева', 'Reach tree level 20'],
     has: (st) => st.player.level >= 20 },
@@ -282,6 +357,8 @@ export function compute(save, now = Date.now()) {
   const dayCounts = {};     // "день|действие" -> сколько раз
   const learned = new Set();
   const goodDays = new Set();
+  const goalClaims = new Set();  // "цель|период" — за что награда уже получена
+  const goalCounts = {};         // id цели -> сколько раз выполнена
   const lastBad = {};       // id привычки -> время последнего срыва
   const runs = {};          // id действия -> { last: номер дня, len: дней подряд, best }
   const subStats = {};      // id подветви -> статистика
@@ -448,6 +525,17 @@ export function compute(save, now = Date.now()) {
       eff.gains[m.sphere] = gainXp(sp[m.sphere], RULES.materialXp, e.t);
       goodDays.add(dayKey(e.t));
       eff.valid = true;
+    } else if (e.k === 'goal') {
+      // Награда за выполненную цель — один раз за период.
+      const g = findGoal(save, e.ref);
+      if (!g || !sp[g.sphere]) continue;
+      const ck = g.id + '|' + (e.p || 'once');
+      if (goalClaims.has(ck)) continue;
+      goalClaims.add(ck);
+      goalCounts[g.id] = (goalCounts[g.id] || 0) + 1;
+      eff.gains[g.sphere] = gainXp(sp[g.sphere], goalReward(g), e.t);
+      eff.goal = g.id;
+      eff.valid = true;
     }
   }
   for (const s of Object.values(sp)) applyDecay(s, now);
@@ -506,6 +594,7 @@ export function compute(save, now = Date.now()) {
     spheres: sp, totalXp, player, stage: stageFor(player.level), streak,
     effects, cleanDays, learned, dayCounts, todayCounts, avgHealth, streaks, subStats,
     perks: pathPerks(player.level), path: pathTier(player.level),
+    goalClaims, goalCounts, goalsDone: goalClaims.size,
   };
 }
 

@@ -21,6 +21,7 @@ export const FEATURES = [
   { id: 'feedback', title: ['Можно написать разработчику', 'You can message the developer'] },
   { id: 'reminders', title: ['Напоминания от бота', 'Reminders from the bot'] },
   { id: 'path', title: ['Путь дерева — карта достижений', 'Tree Path — the achievements map'] },
+  { id: 'goals', title: ['Свои цели', 'Your own goals'] },
 ];
 
 // nav — какой экран открыть перед шагом; target — что подсветить
@@ -99,6 +100,10 @@ export const STEPS = [
     title: ['Путь дерева', 'The Tree Path'],
     text: ['Нажми на уровень вверху — откроется карта достижений. Общий опыт со всех сфер ведёт по вехам, а за них дерево становится пышнее, появляются светлячки, плоды и птицы, открываются новые стили и звания. Внизу — бейджи за особые свершения.',
       'Tap your level at the top to open the achievements map. Total XP from every area moves you along the path, and milestones make the tree fuller, add fireflies, fruit and birds, and unlock new styles and titles. Badges for special feats are at the bottom.'] },
+  { feature: 'goals', nav: { tab: 'goals' }, target: '[data-tab="goals"]',
+    title: ['Ставь себе цели', 'Set yourself goals'],
+    text: ['Во вкладке «Цели» можно поставить цель: делать дело N раз в неделю или месяц, уделять подветви N часов, довести ветвь до нужного уровня или любую свою — например, «сдать сессию». Игра сама считает прогресс, а за выполненную цель даёт награду опытом.',
+      'In the Goals tab you can set a goal: do an activity N times a week or month, spend N hours on a sub-branch, bring a branch to a level, or anything of your own — like “pass my exams”. The game tracks progress and rewards you with XP when you complete it.'] },
 ];
 
 const pick = (v) => (Array.isArray(v) ? T(v[0], v[1]) : v);

@@ -5,7 +5,7 @@
 //  • события объединяются по id;
 //  • отменённые события помнятся в списке deleted и не воскресают;
 //  • «Начать заново» (resetAt) отбрасывает всё, что было создано раньше сброса;
-//  • свои дела и привычки объединяются по id;
+//  • свои дела, привычки, подветви и цели объединяются по id;
 //  • настройки (тема, имя, огоньки) берутся из более свежей версии.
 
 const MAX_DELETED = 3000;
@@ -49,6 +49,7 @@ export function mergeSaves(a, b) {
       acts: byId(a.custom?.acts, b.custom?.acts),
       bads: byId(a.custom?.bads, b.custom?.bads),
       subs: byId(a.custom?.subs, b.custom?.subs),
+      goals: byId(a.custom?.goals, b.custom?.goals),
     },
     tracked: newer.tracked || [],
     // Пройденное обучение не должно «забываться» из-за старого устройства.

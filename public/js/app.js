@@ -1,12 +1,13 @@
 // Интерфейс игры: экраны, кнопки, сохранение.
 
-import { SPHERES, SPHERE_BY_ID, SKILLS, SKILL_BY_ID, MATERIALS, RULES } from './data.js';
+import { SPHERES, SPHERE_BY_ID, SKILLS, SKILL_BY_ID, MATERIALS, RULES, ACTIONS } from './data.js';
 import {
   newSave, normalizeSave, compute, uid, allActions, allBadHabits, findAction, findBad,
   findMaterial, countOnDay, skillStatus, dependentSkills, dayKey,
   findSub, subsOf, SUB_RULES, linkedAction, guessAction,
   STREAK_MILESTONES, nextMilestone,
   PATH, pathTier, pathPerks, earnedBadges,
+  findGoal, goalProgress, goalPeriod, GOAL_RULES,
 } from './game.js';
 import { THEMES, THEME_BY_ID, applyTheme } from './themes.js';
 import { renderTree, renderBranch, subColor } from './tree.js';
@@ -187,7 +188,7 @@ function applyStaticTexts() {
   document.title = T('Древо жизни', 'Tree of Life');
   const desc = document.querySelector('meta[name="description"]');
   if (desc) desc.setAttribute('content', T('Игра для саморазвития: реальные полезные дела растят твоё дерево, а вредные привычки заставляют листья желтеть.', 'A self-improvement game: real useful activities grow your tree, bad habits turn its leaves yellow.'));
-  const tabs = { tree: T('Дерево', 'Tree'), log: T('Отметить', 'Log'), skills: T('Навыки', 'Skills'), materials: T('Материалы', 'Resources'), history: T('История', 'History') };
+  const tabs = { tree: T('Дерево', 'Tree'), log: T('Отметить', 'Log'), goals: T('Цели', 'Goals'), skills: T('Навыки', 'Skills'), materials: T('Материалы', 'Resources'), history: T('История', 'History') };
   for (const [tab, label] of Object.entries(tabs)) {
     const span = document.querySelector(`#tabs [data-tab="${tab}"] span`);
     if (span) span.textContent = label;
@@ -488,6 +489,7 @@ function removeEvent(id) {
 function reportChange(before, after, e) {
   const eff = after.effects[e.id];
   if (!eff || !eff.valid) { toast(T('Это не засчиталось', 'That didn’t count'), 'info'); return; }
+  if (eff.goal) toast(T('🎯 Цель выполнена — так держать!', '🎯 Goal completed — well done!'), 'level');
   for (const [sid, xp] of Object.entries(eff.gains)) {
     const sp = SPHERE_BY_ID[sid];
     const sub = eff.sub ? findSub(ui.save, eff.sub) : null;
@@ -611,9 +613,12 @@ function render() {
   for (const b of document.querySelectorAll('#tabs [data-tab]')) {
     b.setAttribute('aria-current', b.dataset.tab === ui.tab ? 'page' : 'false');
   }
+  // Точка на вкладке «Цели», если есть награда, которую можно забрать.
+  const readyGoal = activeGoals().some(g => { const p = goalProgress(ui.save, st, g); return g.kind !== 'custom' && p.done && !p.claimed; });
+  $('#tabs [data-tab="goals"]')?.classList.toggle('has-dot', readyGoal);
   const panel = $('#panel');
   panel.innerHTML = ui.zoom ? panelBranch(st) : {
-    tree: panelTree, log: panelLog, skills: panelSkills, materials: panelMaterials, history: panelHistory,
+    tree: panelTree, log: panelLog, goals: panelGoals, skills: panelSkills, materials: panelMaterials, history: panelHistory,
   }[ui.tab](st);
   syncTelegram();
 }
@@ -760,6 +765,259 @@ function panelLog(st) {
     <button class="btn btn-ghost btn-wide" data-action="custom-bad">${T('Добавить свою привычку', 'Add your own habit')}</button>`;
 }
 
+// --- Вкладка «Цели» ---
+// «3 раза», «5 дней» — число со словом для русских строк.
+const ruN = (n, f) => {
+  const a = Math.abs(n) % 10; const b = Math.abs(n) % 100;
+  return `${n} ${a === 1 && b !== 11 ? f[0] : a >= 2 && a <= 4 && (b < 12 || b > 14) ? f[1] : f[2]}`;
+};
+const activeGoals = () => (ui.save.custom.goals || []).filter(g => !g.archived);
+
+function goalPeriodText(period) {
+  return { week: T('на этой неделе', 'this week'), month: T('в этом месяце', 'this month'), once: T('разовая цель', 'one-time goal') }[period];
+}
+function goalValueText(g, v) {
+  return g.kind === 'time' ? formatMinutes(v) : String(v);
+}
+function goalIcon(g) {
+  return SPHERE_BY_ID[g.sphere]?.icon || '🎯';
+}
+function deadlineText(g) {
+  if (!g.deadline) return '';
+  const end = new Date(g.deadline + 'T23:59:59').getTime();
+  const days = Math.ceil((end - Date.now()) / DAY);
+  const date = new Date(g.deadline + 'T12:00:00').toLocaleDateString(locale(), { day: 'numeric', month: 'long' });
+  if (days < 0) return `<span class="goal-late">${T(`срок прошёл (${date})`, `overdue (${date})`)}</span>`;
+  if (days === 0) return T('срок — сегодня', 'due today');
+  return T(`до ${date} · ${ruN(days, ['день', 'дня', 'дней'])}`, `by ${date} · ${days} d left`);
+}
+
+function goalCard(st, g) {
+  const p = goalProgress(ui.save, st, g);
+  const sp = SPHERE_BY_ID[g.sphere];
+  const pct = Math.min(100, Math.round(p.value / p.target * 100));
+  const meta = [goalPeriodText(p.period)];
+  if (p.period !== 'once' && p.times) meta.push(T(`выполнено ${ruN(p.times, ['раз', 'раза', 'раз'])}`, `done ${p.times}×`));
+  const dl = p.period === 'once' && !p.claimed ? deadlineText(g) : '';
+  if (dl) meta.push(dl);
+  let action = '';
+  if (p.claimed) {
+    action = `<span class="goal-status">✓ ${p.period === 'once' ? T('Цель достигнута', 'Goal achieved') : p.period === 'week' ? T('Выполнено на этой неделе', 'Done this week') : T('Выполнено в этом месяце', 'Done this month')}</span>`;
+  } else if (g.kind === 'custom') {
+    action = `<button class="btn btn-primary btn-small" data-action="goal-claim" data-id="${g.id}">${T(`Я это сделал · +${p.reward}`, `I did it · +${p.reward}`)}</button>`;
+  } else if (p.done) {
+    action = `<button class="btn btn-primary btn-small goal-ready" data-action="goal-claim" data-id="${g.id}">🎁 ${T(`Забрать награду · +${p.reward}`, `Claim reward · +${p.reward}`)}</button>`;
+  } else {
+    const left = p.target - p.value;
+    action = `<span class="goal-status muted">${g.kind === 'level' ? T(`ещё ${ruN(left, ['уровень', 'уровня', 'уровней'])}`, `${left} more level${left === 1 ? '' : 's'}`) : T(`осталось ${g.kind === 'count' ? ruN(left, ['раз', 'раза', 'раз']) : goalValueText(g, left)}`, `${goalValueText(g, left)} to go`)} · ${T(`награда +${p.reward}`, `reward +${p.reward}`)}</span>`;
+  }
+  return `
+    <div class="goal${p.claimed ? ' is-claimed' : ''}${p.done && !p.claimed && g.kind !== 'custom' ? ' is-ready' : ''}" style="--c:${sp?.color || 'var(--accent)'}">
+      <div class="goal-top">
+        <span class="goal-icon">${goalIcon(g)}</span>
+        <div class="goal-text"><strong>${esc(g.title)}</strong><small>${meta.join(' · ')}</small></div>
+        <button class="icon-btn small" data-action="goal-menu" data-id="${g.id}" aria-label="${T('Меню цели', 'Goal menu')}">⋯</button>
+      </div>
+      ${g.kind === 'custom' ? '' : `<div class="goal-prog"><span class="bar"><i style="width:${pct}%"></i></span><span class="goal-num">${goalValueText(g, Math.min(p.value, p.target))} / ${goalValueText(g, p.target)}</span></div>`}
+      <div class="goal-foot">${action}</div>
+    </div>`;
+}
+
+// Готовые идеи для первой цели.
+function goalTemplates() {
+  const pick = (sphere) => ACTIONS.find(a => a.sphere === sphere);
+  return [
+    ['health', 3, 'week'], ['mind', 5, 'week'], ['soul', 10, 'month'],
+  ].map(([sphere, n, period]) => ({ a: pick(sphere), n, period })).filter(x => x.a);
+}
+
+function panelGoals(st) {
+  const goals = activeGoals();
+  const order = (g) => { const p = goalProgress(ui.save, st, g); return p.done && !p.claimed ? 0 : p.claimed ? 2 : 1; };
+  const open = goals.filter(g => !(goalPeriod(g) === 'once' && goalProgress(ui.save, st, g).claimed)).sort((a, b) => order(a) - order(b));
+  const achieved = goals.filter(g => goalPeriod(g) === 'once' && goalProgress(ui.save, st, g).claimed);
+  const tpl = goalTemplates().map(x => `
+    <button class="chip" data-action="goal-template" data-act="${x.a.id}" data-n="${x.n}" data-period="${x.period}">
+      ${SPHERE_BY_ID[x.a.sphere].icon} ${esc(nm(x.a))} · ${x.n} ${T(x.period === 'week' ? 'р/нед' : 'р/мес', x.period === 'week' ? '×/wk' : '×/mo')}
+    </button>`).join('');
+  return `
+    <div class="panel-head">
+      <h2>${T('Мои цели', 'My goals')}</h2>
+      <p class="muted">${T('Поставь цель — и игра будет считать прогресс сама. За выполненную цель — награда опытом для ветви.', 'Set a goal and the game tracks progress for you. Completing it gives XP to its branch.')}</p>
+    </div>
+    ${open.length ? `<div class="goal-list">${open.map(g => goalCard(st, g)).join('')}</div>` : `
+      <div class="callout">
+        <h3>🎯 ${T('Пока целей нет', 'No goals yet')}</h3>
+        <p class="muted">${T('Начни с готовой идеи или придумай свою:', 'Start with a ready idea or make your own:')}</p>
+        <div class="chips wrap">${tpl}</div>
+      </div>`}
+    <button class="btn btn-primary btn-wide" data-action="add-goal">＋ ${T('Новая цель', 'New goal')}</button>
+    ${achieved.length ? `
+      <details class="goal-done-list">
+        <summary>${T(`Достигнутые цели (${achieved.length})`, `Achieved goals (${achieved.length})`)}</summary>
+        <div class="goal-list">${achieved.map(g => goalCard(st, g)).join('')}</div>
+      </details>` : ''}`;
+}
+
+// Окно новой цели. kind: count | time | level | custom.
+function openAddGoal(kind = 'count', preset = {}) {
+  if (activeGoals().length >= GOAL_RULES.maxActive) {
+    toast(T(`Можно держать до ${GOAL_RULES.maxActive} целей — убери выполненные или лишние`, `You can keep up to ${GOAL_RULES.maxActive} goals — remove some first`), 'info');
+    return;
+  }
+  const st = ui.state || compute(ui.save);
+  const subs = ui.save.custom.subs.filter(x => !x.archived);
+  if (kind === 'time' && !subs.length) kind = 'count';
+  const kinds = [
+    ['count', T('Делать дело', 'Do an activity')],
+    ['time', T('Время на подветвь', 'Time on a sub-branch')],
+    ['level', T('Уровень ветви', 'Branch level')],
+    ['custom', T('Своя цель', 'Custom goal')],
+  ].filter(([k]) => k !== 'time' || subs.length);
+  const tabs = kinds.map(([k, label]) => `<button type="button" aria-selected="${k === kind}" data-action="goal-kind" data-kind="${k}">${label}</button>`).join('');
+  const periodSel = (allowOnce) => `
+    <label class="field"><span>${T('Период', 'Period')}</span><select name="period">
+      <option value="week"${(preset.period || 'week') === 'week' ? ' selected' : ''}>${T('Каждую неделю', 'Every week')}</option>
+      <option value="month"${preset.period === 'month' ? ' selected' : ''}>${T('Каждый месяц', 'Every month')}</option>
+      ${allowOnce ? `<option value="once"${preset.period === 'once' ? ' selected' : ''}>${T('Один раз (всего)', 'Once (in total)')}</option>` : ''}
+    </select></label>`;
+  const sphereSel = (name = 'sphere', sel) => `<select name="${name}">${SPHERES.map(s => `<option value="${s.id}"${s.id === sel ? ' selected' : ''}>${s.icon} ${nm(s)}</option>`).join('')}</select>`;
+  const deadline = `<label class="field"><span>${T('Срок (необязательно)', 'Deadline (optional)')}</span><input type="date" name="deadline" min="${dayKey(Date.now())}"></label>`;
+  let fields = '';
+  if (kind === 'count') {
+    const groups = SPHERES.map(s => {
+      const acts = allActions(ui.save).filter(a => a.sphere === s.id);
+      return acts.length ? `<optgroup label="${s.icon} ${esc(nm(s))}">${acts.map(a => `<option value="${a.id}"${a.id === preset.act ? ' selected' : ''}>${esc(nm(a))}</option>`).join('')}</optgroup>` : '';
+    }).join('');
+    fields = `
+      <label class="field"><span>${T('Какое дело', 'Which activity')}</span><select name="ref">${groups}</select></label>
+      <label class="field"><span>${T('Сколько раз', 'How many times')}</span><input type="number" name="target" min="1" max="100" value="${preset.n || 3}" required></label>
+      ${periodSel(true)}`;
+  } else if (kind === 'time') {
+    fields = `
+      <label class="field"><span>${T('Подветвь', 'Sub-branch')}</span><select name="ref">${subs.map(sb => `<option value="${sb.id}">${SPHERE_BY_ID[sb.sphere]?.icon || ''} ${esc(sb.name)}</option>`).join('')}</select></label>
+      <label class="field"><span>${T('Сколько часов', 'How many hours')}</span><input type="number" name="target" min="0.5" max="200" step="0.5" value="3" required></label>
+      ${periodSel(true)}`;
+  } else if (kind === 'level') {
+    fields = `
+      <label class="field"><span>${T('Ветвь', 'Branch')}</span>${sphereSel('ref', preset.sphere || 'health')}</label>
+      <label class="field"><span>${T('До какого уровня', 'Target level')}</span><input type="number" name="target" min="2" max="60" value="${Math.max(2, (st.spheres[preset.sphere || 'health']?.level || 0) + 3)}" required></label>
+      <p class="field-hint">${T('Сейчас', 'Now')}: ${SPHERES.map(s => `${s.icon} ${st.spheres[s.id].level}`).join(' · ')}</p>
+      ${deadline}`;
+  } else {
+    fields = `
+      <label class="field"><span>${T('Цель', 'Goal')}</span><input name="title" maxlength="60" required placeholder="${T('Например: сдать сессию без троек', 'For example: pass all exams')}"></label>
+      <label class="field"><span>${T('К какой ветви относится (туда пойдёт награда)', 'Which branch it belongs to (gets the reward)')}</span>${sphereSel('sphere', 'mind')}</label>
+      ${deadline}`;
+  }
+  openSheet(`
+    <h2>🎯 ${T('Новая цель', 'New goal')}</h2>
+    <div class="segmented small wrap goal-kinds">${tabs}</div>
+    <form id="sheet-form" novalidate>
+      ${fields}
+      <p class="field-hint">${T('Награда', 'Reward')}: +${GOAL_RULES.reward.week} ${T('опыта за неделю', 'XP per week')}, +${GOAL_RULES.reward.month} ${T('за месяц', 'per month')}, +${GOAL_RULES.reward.once} ${T('за разовую цель', 'for a one-time goal')}.</p>
+      <p class="form-error" role="alert"></p>
+      <div class="sheet-actions">
+        <button type="button" class="btn btn-ghost" data-action="close-sheet">${T('Отмена', 'Cancel')}</button>
+        <button class="btn btn-primary" type="submit">${T('Поставить цель', 'Set goal')}</button>
+      </div>
+    </form>`, (fd) => {
+    const err = $('#sheet .form-error');
+    const goal = { id: 'g_' + uid(), kind, created: Date.now() };
+    const period = String(fd.get('period') || 'week');
+    const num = Number(fd.get('target'));
+    if (kind === 'count') {
+      const a = findAction(ui.save, String(fd.get('ref')));
+      if (!a) { err.textContent = T('Выбери дело', 'Pick an activity'); return false; }
+      if (!(num >= 1 && num <= 100)) { err.textContent = T('Сколько раз — от 1 до 100', 'Times must be 1–100'); return false; }
+      Object.assign(goal, { ref: a.id, sphere: a.sphere, target: Math.round(num), period });
+      goal.title = T(`${nm(a)} — ${ruN(goal.target, ['раз', 'раза', 'раз'])} ${{ week: 'в неделю', month: 'в месяц', once: 'всего' }[period]}`,
+        `${nm(a)} — ${goal.target}× ${{ week: 'a week', month: 'a month', once: 'in total' }[period]}`);
+    } else if (kind === 'time') {
+      const sb = findSub(ui.save, String(fd.get('ref')));
+      if (!sb) { err.textContent = T('Выбери подветвь', 'Pick a sub-branch'); return false; }
+      if (!(num >= 0.5 && num <= 200)) { err.textContent = T('Часы — от 0,5 до 200', 'Hours must be 0.5–200'); return false; }
+      const minutes = Math.round(num * 60);
+      Object.assign(goal, { ref: sb.id, sphere: sb.sphere, target: minutes, period,
+        title: T(`${sb.name} — ${formatMinutes(minutes)} ${{ week: 'в неделю', month: 'в месяц', once: 'всего' }[period]}`,
+          `${sb.name} — ${formatMinutes(minutes)} ${{ week: 'a week', month: 'a month', once: 'in total' }[period]}`) });
+    } else if (kind === 'level') {
+      const sid = String(fd.get('ref'));
+      const sp = SPHERE_BY_ID[sid];
+      if (!sp) { err.textContent = T('Выбери ветвь', 'Pick a branch'); return false; }
+      if (!(num >= 2 && num <= 60)) { err.textContent = T('Уровень — от 2 до 60', 'Level must be 2–60'); return false; }
+      if (num <= st.spheres[sid].level) { err.textContent = T(`Ветвь уже на ${st.spheres[sid].level} уровне — выбери выше`, `This branch is already level ${st.spheres[sid].level} — aim higher`); return false; }
+      Object.assign(goal, { ref: sid, sphere: sid, target: Math.round(num), period: 'once',
+        title: T(`${nm(sp)}: дорасти до ${Math.round(num)} уровня`, `${nm(sp)}: reach level ${Math.round(num)}`) });
+    } else {
+      const title = String(fd.get('title') || '').trim().slice(0, 60);
+      if (!title) { err.textContent = T('Напиши, чего хочешь добиться', 'Write what you want to achieve'); return false; }
+      const sid = String(fd.get('sphere'));
+      Object.assign(goal, { title, sphere: SPHERE_BY_ID[sid] ? sid : 'mind', target: 1, period: 'once' });
+    }
+    const dl = String(fd.get('deadline') || '');
+    if (dl && /^\d{4}-\d{2}-\d{2}$/.test(dl) && goalPeriod(goal) === 'once') goal.deadline = dl;
+    ui.save.custom.goals = [...(ui.save.custom.goals || []), goal];
+    ui.tab = 'goals';
+    commit();
+    toast(T('Цель поставлена — вперёд!', 'Goal set — go for it!'), 'good');
+    haptic('success');
+  });
+}
+
+function claimGoal(id) {
+  const g = findGoal(ui.save, id);
+  if (!g) return;
+  const st = ui.state || compute(ui.save);
+  const p = goalProgress(ui.save, st, g);
+  if (p.claimed) return;
+  if (g.kind !== 'custom' && !p.done) { toast(T('Цель ещё не выполнена', 'The goal isn’t complete yet'), 'info'); return; }
+  addEvent('goal', g.id, Date.now(), { p: p.key });
+}
+
+function openGoalMenu(id) {
+  const g = findGoal(ui.save, id);
+  if (!g) return;
+  const st = ui.state || compute(ui.save);
+  const p = goalProgress(ui.save, st, g);
+  openSheet(`
+    <h2>${goalIcon(g)} ${esc(g.title)}</h2>
+    <p class="muted">${goalPeriodText(p.period)}${p.times ? ' · ' + T(`выполнена ${ruN(p.times, ['раз', 'раза', 'раз'])}`, `completed ${p.times}×`) : ''}</p>
+    <div class="sheet-actions stack">
+      <button class="btn btn-ghost" data-action="goal-rename" data-id="${g.id}">✏️ ${T('Переименовать', 'Rename')}</button>
+      <button class="btn btn-ghost" data-action="goal-archive" data-id="${g.id}">🗂 ${T('Убрать из списка', 'Remove from list')}</button>
+      <button class="btn btn-primary" data-action="close-sheet">${T('Готово', 'Done')}</button>
+    </div>
+    <p class="small muted">${T('Полученная за цель награда останется. Отменить награду можно в «Истории».', 'Rewards you already got stay. You can undo a reward in History.')}</p>`);
+}
+
+function renameGoal(id) {
+  const g = findGoal(ui.save, id);
+  if (!g) return;
+  openSheet(`
+    <h2>${T('Переименовать цель', 'Rename goal')}</h2>
+    <form id="sheet-form" novalidate>
+      <label class="field"><span>${T('Название', 'Name')}</span><input name="title" maxlength="60" required value="${esc(g.title)}"></label>
+      <p class="form-error" role="alert"></p>
+      <div class="sheet-actions">
+        <button type="button" class="btn btn-ghost" data-action="close-sheet">${T('Отмена', 'Cancel')}</button>
+        <button class="btn btn-primary" type="submit">${T('Сохранить', 'Save')}</button>
+      </div>
+    </form>`, (fd) => {
+    const title = String(fd.get('title') || '').trim().slice(0, 60);
+    if (!title) { $('#sheet .form-error').textContent = T('Название не может быть пустым', 'Name can’t be empty'); return false; }
+    ui.save.custom.goals = ui.save.custom.goals.map(x => x.id === id ? { ...x, title } : x);
+    commit();
+  });
+}
+
+function archiveGoal(id) {
+  ui.save.custom.goals = ui.save.custom.goals.map(x => x.id === id ? { ...x, archived: true } : x);
+  closeSheet();
+  commit();
+  toast(T('Цель убрана из списка', 'Goal removed from the list'), 'info');
+}
+
 // --- Вкладка «Навыки» ---
 function panelSkills(st) {
   const chips = SPHERES.map(s =>
@@ -854,6 +1112,7 @@ function eventInfo(e) {
   if (e.k === 'time') { const sb = findSub(ui.save, e.ref); return { title: `${sb?.name || T('Удалённая подветвь', 'Deleted sub-branch')} · ${formatMinutes(Number(e.m) || 0)}`, icon: SPHERE_BY_ID[sb?.sphere]?.icon || '⏱', sphere: sb?.sphere }; }
   if (e.k === 'bad') { const b = findBad(ui.save, e.ref); return { title: b ? nm(b) : T('Удалённая привычка', 'Deleted habit'), icon: '🥀', sphere: b ? Object.keys(b.damage || {})[0] : null, bad: true }; }
   if (e.k === 'skill') { const k = SKILL_BY_ID[e.ref]; return { title: T('Навык: ', 'Skill: ') + (k ? nm(k) : '?'), icon: '🌱', sphere: k?.sphere }; }
+  if (e.k === 'goal') { const g = findGoal(ui.save, e.ref); return { title: T('Цель выполнена: ', 'Goal completed: ') + (g ? g.title : '?'), icon: '🎯', sphere: g?.sphere }; }
   if (e.k === 'mat') { const m = findMaterial(e.ref); return { title: T('Изучил: ', 'Studied: ') + (m ? nm(m, 'title') || m.title || m.title_en : '?'), icon: '📖', sphere: m?.sphere }; }
   return { title: '?', icon: '•', sphere: null };
 }
@@ -1956,6 +2215,13 @@ function onClick(e) {
     case 'forgot-pass': return renderForgot();
     case 'back-to-login': return showAuth();
     case 'open-path': return openPath();
+    case 'add-goal': return openAddGoal();
+    case 'goal-kind': return openAddGoal(el.dataset.kind);
+    case 'goal-template': return openAddGoal('count', { act: el.dataset.act, n: Number(el.dataset.n), period: el.dataset.period });
+    case 'goal-claim': return claimGoal(el.dataset.id);
+    case 'goal-menu': return openGoalMenu(el.dataset.id);
+    case 'goal-rename': return renameGoal(el.dataset.id);
+    case 'goal-archive': return archiveGoal(el.dataset.id);
     case 'locked-theme': return toast(T(`Стиль откроется на уровне ${el.dataset.lvl} — иди по Пути дерева`, `This style unlocks at level ${el.dataset.lvl} — follow the Tree Path`), 'info');
     case 'remind-off': return setReminders(true);
     case 'remind-on': return setReminders(false);
