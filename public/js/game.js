@@ -429,14 +429,11 @@ export function compute(save, now = Date.now()) {
     }
   };
 
-  // Связи подветвей с делами: id дела -> подветви, которые его засчитывают.
+  // Связи подветвей с делами: id подветви -> дело, которое засчитывает время на неё.
   const subLink = {};
-  const actSubs = {};
   for (const sb of save.custom.subs) {
     if (sb.archived) continue;
-    const actId = linkedAction(save, sb);
-    subLink[sb.id] = actId;
-    if (actId) (actSubs[actId] = actSubs[actId] || []).push(sb.id);
+    subLink[sb.id] = linkedAction(save, sb);
   }
 
   for (const e of events) {
@@ -455,9 +452,11 @@ export function compute(save, now = Date.now()) {
       eff.gains[a.sphere] = gainXp(s, a.xp * f, e.t);
       eff.repeat = n;
       bumpRun(a.id, e.t, s, a.sphere, eff);
-      // Дело относится к подветви: своё дело с выбранной подветвью или
-      // стандартное дело, с которым связана ровно одна подветвь.
-      const subId = a.sub || (actSubs[a.id]?.length === 1 ? actSubs[a.id][0] : null);
+      // В подветвь идёт только своё дело, которое игрок сам к ней прикрепил.
+      // Обычное дело (например, «Учился час») не угадываем: игрок мог заниматься
+      // совсем другим предметом. Связь подветвь → дело работает только в одну
+      // сторону: время на подветвь засчитывает дело, но не наоборот.
+      const subId = a.sub || null;
       if (subId && subStats[subId]) {
         addToSub(subId, eff.gains[a.sphere], 0, e.t);
         eff.sub = subId;
